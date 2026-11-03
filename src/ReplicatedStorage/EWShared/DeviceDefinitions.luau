@@ -67,6 +67,7 @@ local Definitions: { [string]: DeviceDefinition } = {
 		},
 		EmissionEnabledByDefault = true,
 		Priority = 2,
+		ManualEmission = true,
 	},
 	Radar = {
 		Id = "Radar",
@@ -99,6 +100,31 @@ local Definitions: { [string]: DeviceDefinition } = {
 		},
 		EmissionEnabledByDefault = true,
 		Priority = 2,
+	},
+	Jammer = {
+		Id = "Jammer",
+		DisplayName = "EW jammer backpack",
+		ElectronicType = "Jammer",
+		DetectionClass = "ActiveTransmitter",
+		DefaultSignalProfile = "JAMMER_BARRAGE_VHF",
+		HasReceiver = false,
+		DefaultPowerState = "Off",
+		BootTimeSeconds = 4,
+		Battery = {
+			CapacityWh = 150,
+			IdleDrawW = 6,
+			ReceiveDrawW = 0,
+			TransmitDrawW = 110,
+			Removable = true,
+		},
+		EmissionEnabledByDefault = false,
+		Priority = 1,
+		ManualEmission = true,
+		Modes = {
+			{ Id = "BARRAGE_VHF", Label = "BARRAGE VHF", Profile = "JAMMER_BARRAGE_VHF" },
+			{ Id = "BARRAGE_UHF", Label = "BARRAGE UHF", Profile = "JAMMER_BARRAGE_UHF" },
+			{ Id = "SPOT", Label = "SPOT", Profile = "JAMMER_SPOT" },
+		},
 	},
 	BackgroundSource = {
 		Id = "BackgroundSource",
@@ -135,6 +161,11 @@ local Aliases: { [string]: string } = {
 	background = "BackgroundSource",
 	backgroundsource = "BackgroundSource",
 	noise = "BackgroundSource",
+	jammer = "Jammer",
+	ewjammer = "Jammer",
+	backpack = "Jammer",
+	ewbackpack = "Jammer",
+	jammerbackpack = "Jammer",
 }
 
 local DeviceDefinitions = {}

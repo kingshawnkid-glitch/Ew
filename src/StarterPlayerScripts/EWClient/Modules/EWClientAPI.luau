@@ -39,4 +39,16 @@ function API.QueryStatus(device: Instance)
 	commandRemote:FireServer({ Action = "QueryStatus", Device = device })
 end
 
+function API.ToggleEmission(device: Instance)
+	commandRemote:FireServer({ Action = "ToggleEmission", Device = device })
+end
+
+function API.SetMode(device: Instance, modeId: string)
+	commandRemote:FireServer({ Action = "SetMode", Device = device, Mode = modeId })
+end
+
+function API.SwapBattery(device: Instance)
+	commandRemote:FireServer({ Action = "SwapBattery", Device = device })
+end
+
 return API

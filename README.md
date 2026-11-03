@@ -16,9 +16,11 @@ direction finding), 4 (jammer), 5 (MQ-1C and relays) and 6 (advanced) build on i
 ## Quick start
 
 1. Insert `build/EWShared.rbxmx` into **ReplicatedStorage**, `build/EWServer.rbxmx` into
-   **ServerScriptService**, and `build/EWClient.rbxmx` into **StarterPlayer › StarterPlayerScripts**.
-   Alternatively, `rojo serve default.project.json`.
-2. Make anything electronic by adding a `BoolValue` named **`EWDetectable`** (true).
+   **ServerScriptService**, and `build/EWClient.rbxmx` plus `build/EWInteractionMenu.rbxmx` into
+   **StarterPlayer › StarterPlayerScripts**. Alternatively, `rojo serve default.project.json`.
+   Remove the old Interaction Menu model; `EWInteractionMenu` replaces it for EW gear.
+2. Make anything electronic by adding a `BoolValue` named **`EWDetectable`** (true). For the EW
+   backpack, also set `ElectronicType = "Jammer"` on the pack.
 3. Press Play, then run the test suite:
    `game.ServerScriptService.EWServer:SetAttribute("EW_RunTests", true)`. You can also press **F6**
    and choose **Run Tests**.
@@ -29,7 +31,7 @@ direction finding), 4 (jammer), 5 (MQ-1C and relays) and 6 (advanced) build on i
 src/ReplicatedStorage/EWShared/        shared types, config, RF math, profiles, materials, remotes
 src/ServerScriptService/EWServer/      bootstrap, services, Studio test range + runner
 src/StarterPlayerScripts/EWClient/     client controller, developer diagnostics UI, debug path renderer
-integrations/InteractionMenu/          EWDevice module for the provided Interaction Menu
+src/StarterPlayerScripts/EWInteractionMenu/  EW interaction menu (hold Left Alt near EW gear)
 build/                                 generated .rbxmx models (python3 tools/build_rbxmx.py)
 tools/                                 rbxmx builder
 ```

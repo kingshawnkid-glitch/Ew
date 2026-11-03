@@ -75,6 +75,7 @@ local Definitions: { [string]: DeviceDefinition } = {
 		},
 		EmissionEnabledByDefault = true,
 		Priority = 2,
+		ManualEmission = true,
 	},
 	Radar = {
 		Id = "Radar",
@@ -107,6 +108,31 @@ local Definitions: { [string]: DeviceDefinition } = {
 		},
 		EmissionEnabledByDefault = true,
 		Priority = 2,
+	},
+	Jammer = {
+		Id = "Jammer",
+		DisplayName = "EW jammer backpack",
+		ElectronicType = "Jammer",
+		DetectionClass = "ActiveTransmitter",
+		DefaultSignalProfile = "JAMMER_BARRAGE_VHF",
+		HasReceiver = false,
+		DefaultPowerState = "Off",
+		BootTimeSeconds = 4,
+		Battery = {
+			CapacityWh = 150,
+			IdleDrawW = 6,
+			ReceiveDrawW = 0,
+			TransmitDrawW = 110,
+			Removable = true,
+		},
+		EmissionEnabledByDefault = false,
+		Priority = 1,
+		ManualEmission = true,
+		Modes = {
+			{ Id = "BARRAGE_VHF", Label = "BARRAGE VHF", Profile = "JAMMER_BARRAGE_VHF" },
+			{ Id = "BARRAGE_UHF", Label = "BARRAGE UHF", Profile = "JAMMER_BARRAGE_UHF" },
+			{ Id = "SPOT", Label = "SPOT", Profile = "JAMMER_SPOT" },
+		},
 	},
 	BackgroundSource = {
 		Id = "BackgroundSource",
@@ -143,6 +169,11 @@ local Aliases: { [string]: string } = {
 	background = "BackgroundSource",
 	backgroundsource = "BackgroundSource",
 	noise = "BackgroundSource",
+	jammer = "Jammer",
+	ewjammer = "Jammer",
+	backpack = "Jammer",
+	ewbackpack = "Jammer",
+	jammerbackpack = "Jammer",
 }
 
 local DeviceDefinitions = {}
@@ -357,11 +388,17 @@ EWConfig.Power = {
 	LowBatteryFraction = 0.15,
 	CriticalBatteryFraction = 0.05,
 	DefaultBootSeconds = 2.0,
+	-- Spare batteries each player carries per life (server-side count; a game
+	-- inventory can override with EquipmentPowerService:SetSpareBatteries).
+	SpareBatteriesPerLife = 2,
 }
 
 EWConfig.Security = {
 	InteractionDistanceStuds = 14, -- max distance for commanding a world device that nobody carries
 	EnforceFactions = false, -- true: world devices with ElectronicFaction only obey players on a Team of that name
+	-- Equipment carried by another player (e.g. a teammate's EW backpack) may be
+	-- operated by players on the same Team standing within InteractionDistance.
+	AllowTeammateControl = true,
 	DeveloperUserIds = {} :: { number }, -- explicit developer allowlist
 	DeveloperGroupId = 0, -- 0 = disabled; otherwise members at or above DeveloperMinRank are developers
 	DeveloperMinRank = 254,
@@ -436,6 +473,7 @@ EWConfig.ChannelPlan = {
 	["TEST-VHF-2"] = 52.250,
 	["TEST-UHF-1"] = 300.000,
 	["TEST-LBAND-1"] = 1350.000,
+	["JAM-SPOT-1"] = 45.000,
 }
 
 -- Test range (Studio only). Placed far from typical map content by default.
@@ -701,6 +739,11 @@ export type DeviceDefinition = {
 	}?, -- nil = externally/mains powered
 	EmissionEnabledByDefault: boolean,
 	Priority: number,
+	-- Operator-selectable modes (each maps to a SignalProfile), e.g. jammer barrage/spot.
+	Modes: { { Id: string, Label: string, Profile: string } }?,
+	-- true = operators may switch the emission on/off directly (jammers, beacons).
+	-- Communications radios key through PTT instead (Phase 2).
+	ManualEmission: boolean?,
 }
 
 -- Server-side authoritative record for one registered electronic object.
@@ -2247,6 +2290,79 @@ local Profiles: { [string]: SignalProfile } = {
 		Stability = 0.9,
 		ContinuousEmission = true,
 		Source = "Game value",
+	},
+	-- Jammer families (GAME VALUES, not real equipment settings). They work purely
+	-- through the shared RF engine: their energy reaches receivers through the same
+	-- terrain/structure propagation as any signal and counts as in-band
+	-- interference in proportion to band overlap, so a wide barrage is diluted and
+	-- a spot mode is concentrated on one channel. Phase 4 adds thermal limits,
+	-- look-through and protected-frequency lists.
+	JAMMER_BARRAGE_VHF = {
+		Id = "JAMMER_BARRAGE_VHF",
+		DisplayName = "Jammer - VHF barrage",
+		SignalType = "Noise",
+		Modulation = "Noise",
+		DetectionClass = "ActiveTransmitter",
+		Intentional = true,
+		DefaultFrequencyMHz = 59.0,
+		MinFrequencyMHz = 30.0,
+		MaxFrequencyMHz = 88.0,
+		BandwidthKHz = 58000,
+		TxPowerDbm = 43.0,
+		DutyCycle = 0.9,
+		Antenna = omni(0.0, 3.0),
+		SensitivityDbm = -200,
+		NoiseFigureDb = 0,
+		RequiredSinrDb = 0,
+		InterferenceRejectionDb = 0,
+		Stability = 0.85,
+		ContinuousEmission = false,
+		Source = "Game value",
+	},
+	JAMMER_BARRAGE_UHF = {
+		Id = "JAMMER_BARRAGE_UHF",
+		DisplayName = "Jammer - UHF barrage",
+		SignalType = "Noise",
+		Modulation = "Noise",
+		DetectionClass = "ActiveTransmitter",
+		Intentional = true,
+		DefaultFrequencyMHz = 368.5,
+		MinFrequencyMHz = 225.0,
+		MaxFrequencyMHz = 512.0,
+		BandwidthKHz = 287000,
+		TxPowerDbm = 43.0,
+		DutyCycle = 0.9,
+		Antenna = omni(0.0, 3.0),
+		SensitivityDbm = -200,
+		NoiseFigureDb = 0,
+		RequiredSinrDb = 0,
+		InterferenceRejectionDb = 0,
+		Stability = 0.85,
+		ContinuousEmission = false,
+		Source = "Game value",
+	},
+	JAMMER_SPOT = {
+		Id = "JAMMER_SPOT",
+		DisplayName = "Jammer - spot (tunable)",
+		SignalType = "Noise",
+		Modulation = "Noise",
+		DetectionClass = "ActiveTransmitter",
+		Intentional = true,
+		DefaultFrequencyMHz = 45.0,
+		MinFrequencyMHz = 30.0,
+		MaxFrequencyMHz = 512.0,
+		BandwidthKHz = 100,
+		TxPowerDbm = 40.0,
+		DutyCycle = 0.9,
+		Antenna = omni(0.0, 3.0),
+		SensitivityDbm = -200,
+		NoiseFigureDb = 0,
+		RequiredSinrDb = 0,
+		InterferenceRejectionDb = 0,
+		Stability = 0.85,
+		ContinuousEmission = false,
+		Source = "Game value",
+		Notes = "Tune with the TransmissionChannel attribute (MHz or channel plan name).",
 	},
 	UNINTENTIONAL_EMISSION = {
 		Id = "UNINTENTIONAL_EMISSION",

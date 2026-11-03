@@ -192,14 +192,33 @@ end
 
 -- Authorization for commanding a device (power, configuration).
 function Security:CanControlDevice(player: Player, record): (boolean, string?)
-	if record.OwnerUserId ~= nil then
-		if record.OwnerUserId == player.UserId then
-			return true, nil
-		end
-		return false, "NOT_OWNER"
+	if record.OwnerUserId ~= nil and record.OwnerUserId == player.UserId then
+		return true, nil
 	end
 	local character = player.Character
 	local hrp = character and character:FindFirstChild("HumanoidRootPart")
+	if record.OwnerUserId ~= nil then
+		-- Carried by someone else: only teammates standing next to the carrier.
+		if not config.Security.AllowTeammateControl then
+			return false, "NOT_OWNER"
+		end
+		local carrier = Players:GetPlayerByUserId(record.OwnerUserId)
+		if carrier == nil then
+			return false, "NOT_OWNER"
+		end
+		local sameTeam = (player.Team == nil and carrier.Team == nil)
+			or (player.Team ~= nil and player.Team == carrier.Team and not player.Neutral)
+		if not sameTeam then
+			return false, "NOT_OWNER"
+		end
+		if not (hrp and hrp:IsA("BasePart")) then
+			return false, "NO_CHARACTER"
+		end
+		if (hrp.Position - record.Position).Magnitude > config.Security.InteractionDistanceStuds then
+			return false, "OUT_OF_RANGE"
+		end
+		return true, nil
+	end
 	if not (hrp and hrp:IsA("BasePart")) then
 		return false, "NO_CHARACTER"
 	end

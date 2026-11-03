@@ -149,6 +149,11 @@ export type DeviceDefinition = {
 	}?, -- nil = externally/mains powered
 	EmissionEnabledByDefault: boolean,
 	Priority: number,
+	-- Operator-selectable modes (each maps to a SignalProfile), e.g. jammer barrage/spot.
+	Modes: { { Id: string, Label: string, Profile: string } }?,
+	-- true = operators may switch the emission on/off directly (jammers, beacons).
+	-- Communications radios key through PTT instead (Phase 2).
+	ManualEmission: boolean?,
 }
 
 -- Server-side authoritative record for one registered electronic object.

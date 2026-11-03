@@ -61,7 +61,14 @@ settings, waveforms, cryptography) is used or needed.
   * `TRF` = traffic (VOC/DAT); `MM` = mission module tab.
   * `SA BLACK/RED` = situational-awareness (PLI) configuration.
 
-## 2. Your Interaction Menu (decoded from `mi_1.0.rbxm`)
+## 2. Your Interaction Menu (decoded from `mi_1.0.rbxm`, now rebuilt as `EWInteractionMenu`)
+
+The rebuilt menu drops the Breach module and the tag requirement, and copies the original layout
+values: BillboardGui 20×20 studs, AlwaysOnTop, MaxDistance 100; Main 0.1×0.02 with dot 0.09
+(RelativeXX); red selector ring 2× rotating at 110°/s; title at X 5.464, stroke 0.7, max text size
+15; Section list at X 0.65 and third column at X 0.77; click sound 6324790483 at volume 0.1.
+The original analysis follows.
+
 
 * Hold **LeftAlt** (or **R3**) to show menus for Attachments tagged `INTERACT_MENU` within the
   module's `Settings.Distance`. Attachment attributes: `Text`, `Module`, `Folder`.

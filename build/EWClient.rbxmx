@@ -43,8 +43,8 @@ local function notify(title: string, text: string)
 end
 
 ClientAPI.StatusReceived:Connect(function(payload)
-	if type(payload) ~= "table" then
-		return
+	if type(payload) ~= "table" or payload.Quiet then
+		return -- quiet replies feed UIs (e.g. menu labels) without a notification
 	end
 	local lines = { tostring(payload.PowerState or "?") }
 	if type(payload.BatteryPercent) == "number" then
@@ -117,6 +117,18 @@ end
 
 function API.QueryStatus(device: Instance)
 	commandRemote:FireServer({ Action = "QueryStatus", Device = device })
+end
+
+function API.ToggleEmission(device: Instance)
+	commandRemote:FireServer({ Action = "ToggleEmission", Device = device })
+end
+
+function API.SetMode(device: Instance, modeId: string)
+	commandRemote:FireServer({ Action = "SetMode", Device = device, Mode = modeId })
+end
+
+function API.SwapBattery(device: Instance)
+	commandRemote:FireServer({ Action = "SwapBattery", Device = device })
 end
 
 return API

@@ -24,11 +24,10 @@ TARGETS = [
     ("src/ReplicatedStorage/EWShared", "EWShared", "EWShared.rbxmx", "ReplicatedStorage"),
     ("src/ServerScriptService/EWServer", "EWServer", "EWServer.rbxmx", "ServerScriptService"),
     ("src/StarterPlayerScripts/EWClient", "EWClient", "EWClient.rbxmx", "StarterPlayer > StarterPlayerScripts"),
+    ("src/StarterPlayerScripts/EWInteractionMenu", "EWInteractionMenu", "EWInteractionMenu.rbxmx",
+     "StarterPlayer > StarterPlayerScripts"),
 ]
-SINGLE_FILES = [
-    ("integrations/InteractionMenu/EWDevice.luau", "EWDevice_InteractionModule.rbxmx",
-     "Interaction Menu > Controller > Interacts"),
-]
+SINGLE_FILES = []
 
 _ref = 0
 

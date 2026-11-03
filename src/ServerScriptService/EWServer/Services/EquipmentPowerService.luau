@@ -22,6 +22,8 @@
 	  BatteryWarning(record, level: "Low" | "Critical", fraction)
 ]]
 
+local Players = game:GetService("Players")
+
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("EWShared")
 local SharedUtilities = require(Shared.SharedUtilities)
 local DeviceDefinitions = require(Shared.DeviceDefinitions)
@@ -34,6 +36,7 @@ EquipmentPowerService.BatteryWarning = SharedUtilities.Signal.new("BatteryWarnin
 local context
 local config
 local registry
+local spares: { [Player]: number } = {}
 
 local function setState(record, newState: string, reason: string)
 	local old = record.PowerState
@@ -62,6 +65,24 @@ function EquipmentPowerService:Init(ctx)
 end
 
 function EquipmentPowerService:Start()
+	-- Spare batteries are a per-life server-side count (a game inventory may override).
+	local function resetSpares(player: Player)
+		spares[player] = config.Power.SpareBatteriesPerLife
+	end
+	local function hook(player: Player)
+		resetSpares(player)
+		player.CharacterAdded:Connect(function()
+			resetSpares(player)
+		end)
+	end
+	Players.PlayerAdded:Connect(hook)
+	Players.PlayerRemoving:Connect(function(player)
+		spares[player] = nil
+	end)
+	for _, player in ipairs(Players:GetPlayers()) do
+		hook(player)
+	end
+
 	registry.DeviceChanged:Connect(function(record, kind)
 		if kind == "PowerAttribute" then
 			local value = record.Root:GetAttribute("PowerState")
@@ -159,6 +180,33 @@ function EquipmentPowerService:ReplaceBattery(record, chargeFraction: number?): 
 	end
 	record.Revision += 1
 	return true, "BATTERY_REPLACED"
+end
+
+function EquipmentPowerService:GetSpareBatteries(player: Player): number
+	return spares[player] or 0
+end
+
+function EquipmentPowerService:SetSpareBatteries(player: Player, count: number)
+	spares[player] = math.max(0, math.floor(count))
+end
+
+-- Swap in one of the player's spare batteries (consumes the spare).
+function EquipmentPowerService:SwapBatteryFromPlayer(player: Player, record): (boolean, string)
+	if not record.Battery then
+		return false, "NO_BATTERY"
+	end
+	if not record.Battery.Removable then
+		return false, "BATTERY_NOT_REMOVABLE"
+	end
+	local available = spares[player] or 0
+	if available <= 0 then
+		return false, "NO_SPARE_BATTERY"
+	end
+	local ok, code = self:ReplaceBattery(record, 1)
+	if ok then
+		spares[player] = available - 1
+	end
+	return ok, code
 end
 
 -- Developer/test helper.

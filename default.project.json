@@ -16,6 +16,9 @@
       "StarterPlayerScripts": {
         "EWClient": {
           "$path": "src/StarterPlayerScripts/EWClient"
+        },
+        "EWInteractionMenu": {
+          "$path": "src/StarterPlayerScripts/EWInteractionMenu"
         }
       }
     }

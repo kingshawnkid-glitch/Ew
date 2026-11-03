@@ -15,9 +15,13 @@
 * **Security layer** (schemas, rate limits, ownership and range checks, developer gate).
 * **Scheduler** with frame, raycast and voxel budgets and three performance profiles.
 * **Diagnostics.** A developer panel, a delta stream, and local-only debug path lines.
-* **A reproducible Studio test range** with 13 automated tests, including a test that adds and
+* **A reproducible Studio test range** with 14 automated tests, including a test that adds and
   removes real Terrain and shows the link responding.
-* **Interaction Menu module** (`EWDevice`) for the menu you provided: Power and Status on any EW device.
+* **EW Interaction Menu.** This is your Interaction Menu rebuilt for EW gear only. The Combat
+  Breaching code and the tag requirement are gone; any object with an `EWDetectable` BoolValue is
+  found automatically. It keeps the same white-dot, label and rotating-selector look, and offers
+  Power, Emission, Mode, Battery and Status. A basic **Jammer** device type (VHF barrage, UHF
+  barrage, spot) radiates through the shared RF engine.
 
 Not in Phase 1, by design: the PRC-163 UI and state machine, voice and text traffic presentation,
 the ES spectrum display, direction finding, jammer gameplay, drones and relays. Phase 1 provides the
@@ -42,7 +46,7 @@ Prebuilt files are in `build/`. Regenerate them with `python3 tools/build_rbxmx.
 | `build/EWShared.rbxmx` | `ReplicatedStorage` (creates `ReplicatedStorage.EWShared`) |
 | `build/EWServer.rbxmx` | `ServerScriptService` (creates `ServerScriptService.EWServer`) |
 | `build/EWClient.rbxmx` | `StarterPlayer > StarterPlayerScripts` (creates `EWClient`) |
-| `build/EWDevice_InteractionModule.rbxmx` | your `Interaction Menu > Controller > Interacts` folder |
+| `build/EWInteractionMenu.rbxmx` | `StarterPlayer > StarterPlayerScripts` (creates `EWInteractionMenu`). **Delete the old `Interaction Menu` model** (both its StarterGui and StarterPlayerScripts parts); this one replaces it. |
 
 ### Resulting hierarchy
 
@@ -67,6 +71,10 @@ StarterPlayer
     EWClient (Folder)
       EWClientController (LocalScript)
       Modules (Folder): EWClientAPI, EWDebugPathRenderer, EWDiagnosticsUI
+    EWInteractionMenu (Folder)
+      Controller (LocalScript)
+      Templates (ModuleScript)          GUI built in code from the original menu's layout values
+      Interacts (Folder): EW (ModuleScript)
 ```
 
 No other setup is required. The system boots by itself. The `Tests` folder may be deleted in
@@ -116,9 +124,45 @@ are invisible to all EW rays.
 | Model | Phase 1 integration |
 |---|---|
 | **AN/PRC-163** (Tool) | `EWDetectable` BoolValue inside `Handle`. Tool attributes: `ElectronicType = "Communications"`, `SignalProfile = "VHF_FM_VOICE"`, `EWSerial = "<unique>"` (the battery survives respawns). Add an `EWAntenna` Attachment at the antenna tip. Phase 2 will register it through `Registry:RegisterDevice` with dual R/T 1 and R/T 2 emitters and receivers. |
-| **Jammer backpack** (worn Accessory or Model) | `EWDetectable` inside the main part. If it is an Accessory, set `EWDeviceRoot = true` on the Accessory so the whole pack is one device. For the Interaction Menu, add an `INTERACT_MENU`-tagged Attachment with `Text = "EW JAMMER"`, `Module = "EWDevice"`. Phase 4 adds the jammer profile and controls. |
+| **Jammer backpack** (worn Accessory, welded Model, or Tool) | Add an `EWDetectable` BoolValue (true) inside the pack's main part, and set the attribute `ElectronicType = "Jammer"` on the pack (Accessory/Model/Tool). Optional: `CustomDisplayName = "EW BACKPACK"`, `EWSerial = "<unique>"`. A worn Accessory is its own device root automatically. That is all the menu needs. For screenshot-style points spread over the gear, see section 4.1. Phase 4 adds thermal limits, look-through and protected frequencies. |
 | **MQ-1C Gray Eagle** (Model) | `EWDetectable` in the model, `ElectronicType = "DroneControl"`, `EWAntenna` attachment(s) on the airframe. The airborne propagation advantage already works (Test H). Payloads come in Phase 5. |
-| **Interaction Menu** (your model) | Put `EWDevice` in `Controller > Interacts`. **Important:** the Controller `require`s every module in `Interacts` at startup, and the included `Breach` module waits forever for `ReplicatedStorage["Combat Breaching"]`. If your place does not have that folder, the whole menu (including EWDevice) never loads, so remove `Breach` or add the folder. |
+| **Interaction Menu** | Replaced by `EWInteractionMenu` (see 4.1). Remove the old model. |
+
+### 4.1 EW Interaction Menu
+
+* **Open it:** hold **Left Alt**, or **R3** on a gamepad. On touch devices, tap the **EW** button.
+  Gear within 10 studs shows a white dot with a label. Hovering spins the red selector, as in the
+  original menu.
+* **Default:** a device with no extra setup gets one point on the part holding the BoolValue,
+  labelled with its name and power state. Clicking it opens:
+  * `POWER [ON/OFF/BOOTING/DEPLETED]`
+  * `EMISSION [RADIATING/SILENT]` (jammers and beacons only; radios use PTT)
+  * `MODE >`, which opens `BARRAGE VHF / BARRAGE UHF / SPOT`
+  * `BATTERY 74% >`, which opens `SWAP BATTERY (n SPARE) / CHECK CHARGE`
+  * `STATUS`, which shows a notification readout
+* **Screenshot-style points:** add Attachments named `EWInteract` where each label should sit on
+  the gear model, and give each one these attributes:
+  * `EWAction`: `Menu`, `Power`, `Emission`, `Battery`, `Mode` or `Status`
+  * `Text` (optional): label override, e.g. `"JAMMER CONTROL"`
+
+  Example: `Power` on the control unit, `Emission` at the antenna base, `Battery` on the battery
+  pouch.
+* **Dot colours:** white = off or unknown, green = on, amber = booting, orange = radiating.
+  Labels update from the server's replies.
+* **Server rules:**
+  * Your own gear always works.
+  * A teammate's gear works only when you are within 14 studs and on the same Team
+    (`EWConfig.Security.AllowTeammateControl`).
+  * Emission requires the device to be On.
+  * A battery swap uses one of *your* spare batteries (`EWConfig.Power.SpareBatteriesPerLife`,
+    default 2; a game inventory can call `Power:SetSpareBatteries`) and switches the device off.
+* **Jammer effect:** a radiating jammer is an ordinary emitter in the shared RF engine.
+  * It degrades receivers whose band it overlaps, through the same terrain and structure
+    propagation as any other signal.
+  * Barrage modes spread power across the whole band, so each channel receives less. Spot mode
+    concentrates power on one channel, set with the `TransmissionChannel` attribute (MHz).
+  * Radios stay powered; only their SINR drops. Friendly radios in band are affected too.
+    Protected-frequency lists come in Phase 4.
 
 Server code reaches the services like this:
 
@@ -138,8 +182,8 @@ See `src/ReplicatedStorage/EWShared/EWRemotes.luau` for the authoritative list.
 
 | Remote | Direction | Payload | Server checks |
 |---|---|---|---|
-| `DeviceCommand` | C→S | `{Action: "TogglePower"/"SetPower"/"QueryStatus", Device: Instance, On: boolean?}` | rate limit 8, then 2/s; exact schema; device resolved from the Instance; carried devices are controllable only by the carrier; world devices only within 14 studs of the player's **server-side** character |
-| `DeviceStatus` | S→C (one player) | `{Ok, DisplayName, PowerState, BatteryPercent?, Message?}` | sent only to the requester or carrier |
+| `DeviceCommand` | C→S | `{Action: "TogglePower"/"SetPower"/"QueryStatus"/"ToggleEmission"/"SetMode"/"SwapBattery", Device: Instance, On: boolean?, Mode: string?}` | rate limit 8, then 2/s; exact schema; device resolved from the Instance; carried devices are controllable by the carrier, or by a teammate within 14 studs; world devices only within 14 studs of the player's **server-side** character; modes must belong to the device definition |
+| `DeviceStatus` | S→C (one player) | `{Ok, Quiet, Root, DisplayName, ElectronicType, PowerState, BatteryPercent?, Emitting, ManualEmission, FrequencyMHz?, ModeId?, ModeLabel?, Modes?, SpareBatteries?, Message?}` | sent only to the requester or carrier; `Quiet` = a status poll (no notification) |
 | `DiagnosticsRequest` | C→S (RemoteFunction) | `{Action, Enabled?, Profile?, TxId?, RxId?, WatchId?}` | developer only, rate limit, schema |
 | `DiagnosticsStream` | S→C (subscribed developers) | `{Kind: "Snapshot"/"TestLog"/"DebugPaths", Data}` | developer re-checked on every publish |
 

@@ -12,7 +12,7 @@
 
 	ROOT RESOLUTION (first match wins, starting at the BoolValue's parent)
 	  1. nearest ancestor with attribute EWDeviceRoot = true
-	  2. the parent Tool or nearest Tool ancestor
+	  2. the parent Tool or nearest Tool ancestor (then: nearest worn Accessory)
 	  3. the parent Model (never Workspace)
 	  4. a BasePart: its parent Model if that Model is not a character, else the part
 	  5. any other container: apply rules 3/4 to the nearest Model/BasePart ancestor
@@ -187,6 +187,14 @@ local function resolveRoot(flag: Instance): Instance?
 	local tool = parent:FindFirstAncestorOfClass("Tool")
 	if tool then
 		return tool
+	end
+	-- 2b. Worn Accessory (e.g. an EW backpack on the character)
+	if parent:IsA("Accessory") then
+		return parent
+	end
+	local accessory = parent:FindFirstAncestorOfClass("Accessory")
+	if accessory then
+		return accessory
 	end
 	-- 3. Model
 	if parent:IsA("Model") and parent ~= workspace then

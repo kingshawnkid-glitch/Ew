@@ -46,7 +46,7 @@ ServerScriptService
     │   └── EWDiagnostics             snapshots, delta stream, debug paths, test trigger
     └── Tests
         ├── EWTestEnvironment         builds the terrain/structure test range
-        └── EWTestRunner              tests A, B, C, E, F, G, H, I, J, K, L, TC, U
+        └── EWTestRunner              tests A, B, C, E, F, G, H, I, J, K, L, M, TC, U
 
 StarterPlayer.StarterPlayerScripts
 └── EWClient                          (Folder)
@@ -55,8 +55,10 @@ StarterPlayer.StarterPlayerScripts
         ├── EWClientAPI               request wrapper (TogglePower/SetPower/QueryStatus)
         ├── EWDiagnosticsUI           developer panel (Devices / Links / Perf / Log)
         └── EWDebugPathRenderer       LOCAL path lines under workspace.CurrentCamera
-
-integrations/InteractionMenu/EWDevice.luau   module for the provided Interaction Menu
+└── EWInteractionMenu                 (Folder)  EW-only rebuild of the provided Interaction Menu
+    ├── Controller (LocalScript)      EWDetectable discovery, hold-to-show, 3-level lists
+    ├── Templates                     GUI built in code from the original layout values
+    └── Interacts/EW                  Power / Emission / Mode / Battery / Status requests
 ```
 
 ### Dependency rules
@@ -138,7 +140,7 @@ is a tag for volumes that use `NoiseEnvironment` / `ExtraNoiseDb` attributes.
      `EWDevice` tag or `Registry:RegisterDevice` (API) registers it explicitly.
 2. **Root resolution.** The first matching rule, starting at the BoolValue's parent, picks the root:
    1. the nearest ancestor with attribute `EWDeviceRoot = true`
-   2. the parent `Tool`, or the nearest `Tool` ancestor
+   2. the parent `Tool`, or the nearest `Tool` ancestor, then the nearest worn `Accessory`
    3. the parent `Model` (never Workspace)
    4. a `BasePart`: its parent Model if that Model is not character-like (has no Humanoid), else the part itself
    5. any other container (Folder, Configuration, Attachment): rules 3 and 4 applied to the nearest Model/BasePart ancestor
@@ -168,6 +170,7 @@ is a tag for volumes that use `NoiseEnvironment` / `ExtraNoiseDb` attributes.
 | `RadarEmitter` | `SEARCH_RADAR_X` | pulsed; average power = peak × duty cycle |
 | `DroneLink` | `DRONE_C2_24`, `DRONE_VIDEO_58` | continuous telemetry/video |
 | `PassiveElectronic` | `UNINTENTIONAL_EMISSION` | −45 dBm broadband signature; plausible only at short range |
+| `ActiveTransmitter` (Jammer) | `JAMMER_BARRAGE_VHF`, `JAMMER_BARRAGE_UHF`, `JAMMER_SPOT` | radiates only when the operator enables emission; game-value power, diluted by band overlap |
 | `BackgroundSource` | `BROADBAND_NOISE` | wideband noise (generators, power lines) |
 
 An object with only `EWDetectable = true` becomes `Generic` / `PassiveElectronic` with the weak
@@ -399,4 +402,5 @@ Energy always counts toward **interference**, even when traffic is unintelligibl
 | F | Detectable versus deactivated versus `EWDetectable = false` (still emitting, not detectable). |
 | I | Transmit draw exceeds idle draw; an empty battery means Depleted and Offline; power-on is refused; battery swap → boot → link restored. |
 | J | Payload schema rejections, rate-limit burst, ownership and range refusals. The client-side remote abuse script is in the guide. |
+| M | EW backpack: a UHF barrage degrades a UHF link by at least 10 dB while a VHF barrage leaves it unchanged, the jammed radio stays powered, and radiating draws heavy power. Menu commands (Power, Emission, Mode, battery swap) succeed for a nearby player, and unauthorized or malformed requests are refused. |
 | K | 60 moving devices, 40 watched links and 6 active emitters for 10 s. Reports frame cost, rays per frame against budget, evaluations and job costs. |

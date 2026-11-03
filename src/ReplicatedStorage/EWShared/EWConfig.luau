@@ -171,11 +171,17 @@ EWConfig.Power = {
 	LowBatteryFraction = 0.15,
 	CriticalBatteryFraction = 0.05,
 	DefaultBootSeconds = 2.0,
+	-- Spare batteries each player carries per life (server-side count; a game
+	-- inventory can override with EquipmentPowerService:SetSpareBatteries).
+	SpareBatteriesPerLife = 2,
 }
 
 EWConfig.Security = {
 	InteractionDistanceStuds = 14, -- max distance for commanding a world device that nobody carries
 	EnforceFactions = false, -- true: world devices with ElectronicFaction only obey players on a Team of that name
+	-- Equipment carried by another player (e.g. a teammate's EW backpack) may be
+	-- operated by players on the same Team standing within InteractionDistance.
+	AllowTeammateControl = true,
 	DeveloperUserIds = {} :: { number }, -- explicit developer allowlist
 	DeveloperGroupId = 0, -- 0 = disabled; otherwise members at or above DeveloperMinRank are developers
 	DeveloperMinRank = 254,
@@ -250,6 +256,7 @@ EWConfig.ChannelPlan = {
 	["TEST-VHF-2"] = 52.250,
 	["TEST-UHF-1"] = 300.000,
 	["TEST-LBAND-1"] = 1350.000,
+	["JAM-SPOT-1"] = 45.000,
 }
 
 -- Test range (Studio only). Placed far from typical map content by default.

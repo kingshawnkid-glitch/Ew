@@ -34,8 +34,8 @@ local function notify(title: string, text: string)
 end
 
 ClientAPI.StatusReceived:Connect(function(payload)
-	if type(payload) ~= "table" then
-		return
+	if type(payload) ~= "table" or payload.Quiet then
+		return -- quiet replies feed UIs (e.g. menu labels) without a notification
 	end
 	local lines = { tostring(payload.PowerState or "?") }
 	if type(payload.BatteryPercent) == "number" then

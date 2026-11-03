@@ -14,7 +14,8 @@
 	Tests: A Boolean registration | L Object lifecycle | B Mountain obstruction
 	       TC Terrain change (reproducible) | C Buildings | E Dynamic movement
 	       H Airborne | U Underground / water / vegetation | G Interference (core)
-	       F Detection eligibility (core) | I Battery | J Security | K Performance
+	       F Detection eligibility (core) | I Battery | J Security | M EW backpack menu
+	       K Performance
 ]]
 
 local Players = game:GetService("Players")
@@ -712,6 +713,107 @@ table.insert(Tests, {
 			check.That(not ok3, "real player far from a world device is refused (" .. tostring(why3) .. ")")
 		end
 		log("    Client-side remote abuse test: see docs/PHASE1_GUIDE.md (Test J)")
+		return check.Result()
+	end,
+})
+
+table.insert(Tests, {
+	Name = "M  EW backpack: menu commands and jammer modes through the shared RF engine",
+	Run = function(context, env, log)
+		local check = newCheck(log)
+		local commands = context.DeviceCommands
+		local power = context.Power
+
+		-- 1) RF effect, no player needed: a jammer next to RX_OPEN degrades an in-band
+		--    UHF link only when its mode covers UHF, and never powers the radio down.
+		setProfile(context, env, { "BLDG_TX", "RX_OPEN" }, BANDS[2])
+		local jammerModel = Env.CreateStation(env, "TEST_JAMMER", env.Origin + Vector3.new(360, 0, -820), {
+			ElectronicType = "Jammer",
+			Profile = "JAMMER_BARRAGE_VHF",
+			Channel = 59,
+		})
+		settle(context)
+		local jammer = Env.GetRecord(env, "TEST_JAMMER")
+		check.That(jammer ~= nil and jammer.DefinitionId == "Jammer", "ElectronicType Jammer resolves to the jammer definition")
+		check.That(jammer ~= nil and jammer.PowerState == "Off", "jammer backpack starts powered off")
+		local baseline = measure(context, env, "BLDG_TX", "RX_OPEN", { Interference = true })
+		power:SetPower(jammer, true)
+		local deadline = os.clock() + 8
+		repeat
+			task.wait(0.25)
+		until jammer.PowerState == "On" or os.clock() > deadline
+		check.That(jammer.PowerState == "On", "jammer boots")
+		context.Registry:SetEmitterTransmitting(jammer, 1, true)
+		local vhfMode = measure(context, env, "BLDG_TX", "RX_OPEN", { Interference = true })
+		jammerModel:SetAttribute("SignalProfile", "JAMMER_BARRAGE_UHF")
+		jammerModel:SetAttribute("TransmissionChannel", 368.5)
+		settle(context)
+		local uhfMode = measure(context, env, "BLDG_TX", "RX_OPEN", { Interference = true })
+		log("    no jammer          " .. describe(baseline))
+		log("    VHF barrage on     " .. describe(vhfMode) .. " I=" .. f1(vhfMode.InterferenceDbm))
+		log("    UHF barrage on     " .. describe(uhfMode) .. " I=" .. f1(uhfMode.InterferenceDbm))
+		check.That(math.abs(vhfMode.SinrDb - baseline.SinrDb) <= 1, "VHF barrage does not affect a UHF receiver (out of band)")
+		check.That(uhfMode.SinrDb <= baseline.SinrDb - 10, "UHF barrage degrades the UHF link >= 10 dB")
+		check.That(Env.GetRecord(env, "RX_OPEN").PowerState == "On", "jammed radio stays powered (degradation, not destruction)")
+		local drawOn = power:CurrentDrawW(jammer)
+		check.That(drawOn > 50, string.format("radiating jammer draws heavy power (%.0f W)", drawOn))
+
+		-- 2) Menu command path (needs a player character for authorization).
+		local player = Players:GetPlayers()[1]
+		local hrp = player and player.Character and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+		local flag = jammerModel:FindFirstChild("EWDetectable", true)
+		local okFar, whyFar = commands:Execute({ UserId = -7, Name = "Nobody", Character = nil } :: any, { Action = "TogglePower", Device = flag })
+		check.That(not okFar, "command without a nearby character is refused (" .. tostring(whyFar) .. ")")
+		local okBad, whyBad = commands:Execute({ UserId = -8, Name = "Nobody2", Character = nil } :: any, { Action = "SetMode", Device = flag, Mode = 5 })
+		check.That(not okBad, "malformed mode is rejected (" .. tostring(whyBad) .. ")")
+		if hrp then
+			local pack = Instance.new("Model")
+			pack.Name = "TestEWBackpack"
+			local body = Instance.new("Part")
+			body.Name = "Body"
+			body.Anchored = true
+			body.CanCollide = false
+			body.Size = Vector3.new(2, 2.5, 1)
+			body.CFrame = hrp.CFrame * CFrame.new(0, 0, 4)
+			body.Parent = pack
+			pack.PrimaryPart = body
+			pack:SetAttribute("ElectronicType", "Jammer")
+			local packFlag = Instance.new("BoolValue")
+			packFlag.Name = "EWDetectable"
+			packFlag.Value = true
+			packFlag.Parent = body
+			pack.Parent = workspace
+			settle(context)
+			local record = context.Registry:GetByRoot(pack)
+			check.That(record ~= nil, "backpack model next to the player registers")
+			if record then
+				local ok1 = commands:Execute(player, { Action = "TogglePower", Device = packFlag })
+				check.That(ok1 and record.PowerState == "Booting", "menu Power starts the boot sequence")
+				local ok2, code2 = commands:Execute(player, { Action = "ToggleEmission", Device = packFlag })
+				check.That(not ok2 and code2 == "NOT_POWERED", "emission refused until boot completes")
+				local d2 = os.clock() + 8
+				repeat
+					task.wait(0.25)
+				until record.PowerState == "On" or os.clock() > d2
+				local ok3 = commands:Execute(player, { Action = "ToggleEmission", Device = packFlag })
+				check.That(ok3 and record.Emitters[1].Transmitting, "menu Emission starts radiating")
+				local ok4 = commands:Execute(player, { Action = "SetMode", Device = packFlag, Mode = "SPOT" })
+				check.That(ok4 and record.Emitters[1].ProfileId == "JAMMER_SPOT", "menu Mode switches to SPOT")
+				local ok5, code5 = commands:Execute(player, { Action = "SetMode", Device = packFlag, Mode = "NOT_A_MODE" })
+				check.That(not ok5 and code5 == "UNKNOWN_MODE", "unsupported mode refused")
+				local spares = power:GetSpareBatteries(player)
+				local ok6 = commands:Execute(player, { Action = "SwapBattery", Device = packFlag })
+				check.That(ok6 and power:GetSpareBatteries(player) == spares - 1, "battery swap consumes one spare")
+				check.That(record.PowerState == "Off" and not record.Emitters[1].Transmitting, "battery swap interrupts power and emission")
+			end
+			pack:Destroy()
+			settle(context)
+		else
+			log("    (no player character - authorized menu command checks skipped; run in Play mode)")
+		end
+		jammerModel:Destroy()
+		env.Stations.TEST_JAMMER = nil
+		settle(context)
 		return check.Result()
 	end,
 })
