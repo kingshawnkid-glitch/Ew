@@ -1,0 +1,2332 @@
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
+	<Item class="Folder" referent="RBX00000001">
+		<Properties>
+			<string name="Name">EWShared</string>
+		</Properties>
+		<Item class="ModuleScript" referent="RBX00000002">
+			<Properties>
+				<string name="Name">DeviceDefinitions</string>
+				<ProtectedString name="Source"><![CDATA[--!strict
+--[[
+	DeviceDefinitions
+	Maps the optional "ElectronicType" attribute to sensible defaults so that an
+	object with ONLY an EWDetectable BoolValue still works.
+
+	Resolution order used by the registry:
+	  1. ElectronicType attribute (exact Id or alias, case-insensitive)
+	  2. "Generic" (powered passive electronics with an unintentional signature)
+
+	Battery figures are game values chosen for session-length gameplay; they are
+	scaled globally by EWConfig.Power.BatteryDrainMultiplier.
+]]
+
+local Types = require(script.Parent.EWTypes)
+
+type DeviceDefinition = Types.DeviceDefinition
+
+local Definitions: { [string]: DeviceDefinition } = {
+	Generic = {
+		Id = "Generic",
+		DisplayName = "Electronic device",
+		ElectronicType = "Generic",
+		DetectionClass = "PassiveElectronic",
+		DefaultSignalProfile = "UNINTENTIONAL_EMISSION",
+		HasReceiver = false,
+		DefaultPowerState = "On",
+		BootTimeSeconds = 0,
+		Battery = nil,
+		EmissionEnabledByDefault = true,
+		Priority = 3,
+	},
+	Communications = {
+		Id = "Communications",
+		DisplayName = "Radio",
+		ElectronicType = "Communications",
+		DetectionClass = "Communications",
+		DefaultSignalProfile = "VHF_FM_VOICE",
+		HasReceiver = true,
+		DefaultPowerState = "On",
+		BootTimeSeconds = 2,
+		Battery = {
+			CapacityWh = 60,
+			IdleDrawW = 1.2,
+			ReceiveDrawW = 0.8,
+			TransmitDrawW = 14,
+			Removable = true,
+		},
+		EmissionEnabledByDefault = false, -- radios only emit while keyed (PTT)
+		Priority = 2,
+	},
+	ActiveTransmitter = {
+		Id = "ActiveTransmitter",
+		DisplayName = "Transmitter",
+		ElectronicType = "ActiveTransmitter",
+		DetectionClass = "ActiveTransmitter",
+		DefaultSignalProfile = "BEACON_UHF",
+		HasReceiver = false,
+		DefaultPowerState = "On",
+		BootTimeSeconds = 1,
+		Battery = {
+			CapacityWh = 40,
+			IdleDrawW = 0.5,
+			ReceiveDrawW = 0,
+			TransmitDrawW = 2,
+			Removable = true,
+		},
+		EmissionEnabledByDefault = true,
+		Priority = 2,
+	},
+	Radar = {
+		Id = "Radar",
+		DisplayName = "Radar",
+		ElectronicType = "Radar",
+		DetectionClass = "RadarEmitter",
+		DefaultSignalProfile = "SEARCH_RADAR_X",
+		HasReceiver = true,
+		DefaultPowerState = "On",
+		BootTimeSeconds = 5,
+		Battery = nil,
+		EmissionEnabledByDefault = true,
+		Priority = 2,
+	},
+	DroneControl = {
+		Id = "DroneControl",
+		DisplayName = "Drone controller",
+		ElectronicType = "DroneControl",
+		DetectionClass = "DroneLink",
+		DefaultSignalProfile = "DRONE_C2_24",
+		HasReceiver = true,
+		DefaultPowerState = "On",
+		BootTimeSeconds = 2,
+		Battery = {
+			CapacityWh = 30,
+			IdleDrawW = 2,
+			ReceiveDrawW = 1,
+			TransmitDrawW = 3,
+			Removable = true,
+		},
+		EmissionEnabledByDefault = true,
+		Priority = 2,
+	},
+	BackgroundSource = {
+		Id = "BackgroundSource",
+		DisplayName = "Electrical noise source",
+		ElectronicType = "BackgroundSource",
+		DetectionClass = "BackgroundSource",
+		DefaultSignalProfile = "BROADBAND_NOISE",
+		HasReceiver = false,
+		DefaultPowerState = "On",
+		BootTimeSeconds = 0,
+		Battery = nil,
+		EmissionEnabledByDefault = true,
+		Priority = 3,
+	},
+}
+
+local Aliases: { [string]: string } = {
+	generic = "Generic",
+	passive = "Generic",
+	passiveelectronic = "Generic",
+	electronics = "Generic",
+	communications = "Communications",
+	comms = "Communications",
+	radio = "Communications",
+	transmitter = "ActiveTransmitter",
+	activetransmitter = "ActiveTransmitter",
+	beacon = "ActiveTransmitter",
+	radar = "Radar",
+	radaremitter = "Radar",
+	drone = "DroneControl",
+	dronecontrol = "DroneControl",
+	dronelink = "DroneControl",
+	telemetry = "DroneControl",
+	background = "BackgroundSource",
+	backgroundsource = "BackgroundSource",
+	noise = "BackgroundSource",
+}
+
+local DeviceDefinitions = {}
+
+DeviceDefinitions.DefaultId = "Generic"
+
+function DeviceDefinitions.Resolve(electronicType: any): DeviceDefinition
+	if type(electronicType) == "string" then
+		local direct = Definitions[electronicType]
+		if direct then
+			return direct
+		end
+		local alias = Aliases[string.lower((string.gsub(electronicType, "[%s_%-]", "")))]
+		if alias then
+			return Definitions[alias]
+		end
+	end
+	return Definitions[DeviceDefinitions.DefaultId]
+end
+
+function DeviceDefinitions.Get(id: string): DeviceDefinition?
+	return Definitions[id]
+end
+
+function DeviceDefinitions.Register(definition: DeviceDefinition)
+	assert(type(definition.Id) == "string", "definition.Id required")
+	Definitions[definition.Id] = definition
+	Aliases[string.lower(definition.Id)] = definition.Id
+end
+
+function DeviceDefinitions.All(): { [string]: DeviceDefinition }
+	return Definitions
+end
+
+return DeviceDefinitions
+]]></ProtectedString>
+			</Properties>
+		</Item>
+		<Item class="ModuleScript" referent="RBX00000003">
+			<Properties>
+				<string name="Name">EWConfig</string>
+				<ProtectedString name="Source"><![CDATA[--!strict
+--[[
+	EWConfig
+	Every tunable number in the EW simulation lives here. Nothing in the services
+	hardcodes a range: links close or fail because of the link budget built from
+	these parameters plus the actual map geometry.
+
+	All values are GAME SIMULATION PARAMETERS. Where a default was taken from a
+	public reference (ITU-R recommendation, public manufacturer datasheet) the
+	comment says so; everything else is a gameplay-tuned value.
+
+	To override at runtime without editing this file, set Attributes on the
+	ServerScriptService.EWServer folder (see docs/PHASE1_GUIDE.md):
+	  EW_PerformanceProfile  = "Development" | "Normal" | "HighPopulation" | "Auto"
+	  EW_MetersPerStud       = number
+	  EW_RunTests            = true   (Studio only, runs the Phase 1 test suite)
+]]
+
+local EWConfig = {}
+
+EWConfig.Version = "1.0.0-phase1"
+
+EWConfig.Units = {
+	-- Geometric scale used for every RF calculation (distance, antenna height,
+	-- wall thickness, Fresnel zones). 0.28 m/stud matches Roblox avatar scale.
+	-- Raising it makes the world "RF-larger": free-space loss and terrain
+	-- diffraction both grow, so ranges shrink relative to the map.
+	MetersPerStud = 0.28,
+	-- Map-compression factor applied ONLY to the distance term of the basic
+	-- transmission loss (free-space / plane-earth). Terrain, structure and
+	-- Fresnel geometry always use true geometry.
+	--   1.0 = literal avatar scale (a 4,000-stud map is ~1.1 km: VHF/UHF voice
+	--         then works almost everywhere that is not deeply obstructed)
+	--   3.0 = default: Roblox maps treated as ~3x compressed for range, so
+	--         ridges, distance and power level matter on typical map sizes.
+	RangeScale = 3.0,
+	MinLinkDistanceMeters = 1.0,
+	-- Longest single raycast segment. Longer paths are split into segments.
+	MaxRaySegmentStuds = 4000,
+}
+
+EWConfig.Registry = {
+	FlagName = "EWDetectable", -- the mandatory BoolValue name
+	TagName = "EWDevice", -- optional CollectionService integration (no BoolValue needed)
+	RootOverrideAttribute = "EWDeviceRoot", -- set true on an ancestor to force it as the device root
+	AntennaAttachmentName = "EWAntenna", -- optional Attachment marking the antenna feed point
+	PersistSecondsAfterRemoval = 300, -- state (power, battery) survives respawn/re-insert by EWSerial
+	MaxRootSearchDepth = 24,
+}
+
+EWConfig.Propagation = {
+	-- Terrain/structure height field used for the diffraction profile.
+	HeightCellStuds = 8,
+	HeightProbeTop = 3000, -- downward probes start here (world Y)
+	HeightProbeBottom = -600, -- and end here
+	MaxHeightCells = 350000, -- cache is cleared when it grows beyond this (memory bound)
+	HeightCacheMaxAgeSeconds = 300, -- full refresh so un-notified map edits heal (0 = never)
+	MaxSkipHitsPerProbe = 4, -- dynamic/vegetation/ignored hits skipped per probe
+
+	-- Profile sampling along the path.
+	ProfileSpacingStuds = 16,
+	ProfileMinSamples = 8,
+	ProfileMaxSamples = 72,
+	EndpointGroundExclusionStuds = 6, -- samples this close to an endpoint never count as diffraction edges
+	EarthKFactor = 4 / 3, -- effective earth radius factor (standard atmosphere)
+	MaxDiffractionDepth = 1, -- 1 = classic Deygout (principal + one secondary edge each side)
+
+	-- Structure ray tracing.
+	RespectCanCollide = true, -- non-collidable parts are decorative unless tagged
+	RaycastCollisionGroup = nil :: string?, -- optional collision group for EW rays
+	MinObstacleVolume = 0.6, -- parts smaller than this (stud^3) ...
+	MinObstacleMaxDimension = 2.5, -- ...and with no side longer than this are ignored
+	IgnoreTransparencyAbove = 0.98, -- invisible blockers are ignored unless given EWMaterial
+	MaxObstaclesPerRay = 10,
+	MaxPenetrationStudsPerObstacle = 60, -- thicker solids are treated as opaque (loss capped)
+	EndpointClutterRadiusStuds = 40, -- obstacles this close to an endpoint must be passed on any path
+	SpindleSubPaths = 2, -- extra Fresnel-ellipsoid sample paths (0, 2 or 4); profile may reduce
+	SpindleReferenceMHz = 300, -- reference wavelength for spindle offsets (geometry is cached frequency-free)
+	SpindleFresnelFraction = 0.6,
+	SpindleMaxOffsetStuds = 14,
+	SpindleOnlyWhenObstructed = false, -- low-priority links only sample spindles when the center ray hit something
+
+	-- Terrain mass penetration (voxel checks under the surface).
+	MaxVoxelReadsPerPath = 32,
+	TerrainPenetrationMaxDb = 160,
+	EndpointWaterProbeStuds = 64,
+
+	-- Terrain-covered open space along the line of sight (tunnels, caves,
+	-- bunkers). Low frequencies are below the waveguide cutoff of typical
+	-- tunnels and die quickly; UHF and above propagate along straight tunnels.
+	CavityLossDbPerMeterAt300MHz = 0.08,
+	CavityFrequencyExponent = -1.5,
+	CavityMaxLossDb = 80,
+
+	-- Water (Roblox terrain water is treated as fresh water by default).
+	WaterInterfaceLossDb = 6,
+	WaterLossDbPerMeterAt100MHz = 1.8, -- low-loss dielectric approximation for fresh water
+	WaterFrequencyExponent = 0.5,
+	WaterMaxLossDb = 140,
+
+	-- Vegetation (Weissberger modified exponential decay model), capped because a
+	-- lower-loss path around the vegetation always exists (ITU-R P.833 guidance).
+	VegetationTag = "EWVegetation",
+	VegetationMaxLossDb = 30,
+	VegetationMinFrequencyGHz = 0.03,
+
+	-- Caching.
+	PathQuantumStuds = 2, -- endpoints are quantized to this grid for cache keys
+	PathCacheTtlSeconds = 8,
+	PathCacheMaxEntries = 1500,
+	RegionRevisionCellStuds = 256,
+	AutoInvalidateMinPartSize = 8, -- anchored parts with a side >= this invalidate caches when added/removed
+
+	-- Classification thresholds for PropagationLosses.Class.
+	PartialObstructionMinDb = 1.5,
+	ObstructedMinDb = 8,
+	HeavyObstructionMinDb = 25,
+}
+
+EWConfig.Fading = {
+	Enabled = true,
+	ShadowDecorrelationStuds = 60,
+	ShadowSigmaDb = { Unobstructed = 1.5, PartiallyObstructed = 3, Obstructed = 5, HeavilyObstructed = 7 },
+	-- Rician K-factor (linear) per class; 0 = Rayleigh.
+	RicianK = { Unobstructed = 12, PartiallyObstructed = 4, Obstructed = 1, HeavilyObstructed = 0 },
+	MinDopplerHz = 0.15, -- environmental motion when both ends are stationary
+	DeepFadeFloorDb = -30,
+	EquipmentJitterMaxDb = 3, -- at Stability = 0
+}
+
+EWConfig.Noise = {
+	-- ITU-R P.372 man-made noise: Fam(dB) = c - d * log10(f MHz).
+	Categories = {
+		City = { c = 76.8, d = 27.7 },
+		Residential = { c = 72.5, d = 27.7 },
+		Rural = { c = 67.2, d = 27.7 },
+		QuietRural = { c = 53.6, d = 28.6 },
+		Galactic = { c = 52.0, d = 23.0 },
+	},
+	DefaultCategory = "Rural",
+	NoiseZoneTag = "EWNoiseZone",
+	StormNoiseMaxDb = 20, -- atmospheric (lightning) noise boost at 30 MHz at storm intensity 1
+}
+
+EWConfig.Interference = {
+	Enabled = true,
+	MaxCandidateRangeStuds = 8000,
+	MaxDetailedInterferers = 4, -- strongest N get a full terrain analysis, the rest use the basic loss
+	AdjacentChannelRejectionDb = 60,
+	AdjacentChannelSpan = 3, -- receiver bandwidths either side considered "adjacent"
+	MinUsefulOverlap = 1e-4,
+	ModulationMismatchPenaltyDb = 0, -- energy still interferes even if it cannot be demodulated
+}
+
+EWConfig.Quality = {
+	-- Margin = SINR - RequiredSinr. Thresholds in dB (downward crossing uses -Hysteresis).
+	Thresholds = { Clear = 15, Good = 8, Degraded = 3, Broken = -1 },
+	HysteresisDb = 1.5,
+	NoSignalMarginDb = -10,
+	SensitivityFloorMarginDb = 3, -- received power this far below sensitivity = NoSignal
+	ScoreMidpointDb = 4,
+	ScoreSlope = 0.42,
+	PacketLossMidpointDb = 0,
+	PacketLossSlope = 0.75,
+	SmoothingAlpha = 0.35, -- EMA factor for SmoothedMarginDb
+}
+
+EWConfig.Power = {
+	TickSeconds = 1.0,
+	BatteryDrainMultiplier = 1.0, -- gameplay scaling of all battery drain
+	LowBatteryFraction = 0.15,
+	CriticalBatteryFraction = 0.05,
+	DefaultBootSeconds = 2.0,
+}
+
+EWConfig.Security = {
+	InteractionDistanceStuds = 14, -- max distance for commanding a world device that nobody carries
+	EnforceFactions = false, -- true: world devices with ElectronicFaction only obey players on a Team of that name
+	DeveloperUserIds = {} :: { number }, -- explicit developer allowlist
+	DeveloperGroupId = 0, -- 0 = disabled; otherwise members at or above DeveloperMinRank are developers
+	DeveloperMinRank = 254,
+	StudioUsersAreDevelopers = true,
+	CreatorIsDeveloper = true,
+	RateLimits = {
+		DeviceCommand = { Capacity = 8, RefillPerSecond = 2 },
+		DiagnosticsRequest = { Capacity = 12, RefillPerSecond = 3 },
+	},
+	MaxStringLength = 64,
+}
+
+EWConfig.Diagnostics = {
+	PublishIntervalSeconds = 1.0,
+	MaxDevicesInSnapshot = 150,
+	MaxLinksInSnapshot = 60,
+	AllowDebugVisualsInLiveServers = false,
+	AllowTestsInLiveServers = false,
+	ToggleKey = Enum.KeyCode.F6,
+	WarnRateLimitSeconds = 5,
+}
+
+EWConfig.Scheduler = {
+	-- Link evaluation interval per priority (1 = critical, 2 = normal, 3 = background).
+	LinkIntervals = { [1] = 0.2, [2] = 0.5, [3] = 2.0 },
+	LinkMoveThresholdStuds = 3, -- endpoint movement that makes a watched link due immediately
+	DevicePositionMinInterval = 0.2,
+	DevicePositionMaxInterval = 2.0,
+	MovingSpeedThreshold = 0.5, -- studs/s
+	CacheMaintenanceSeconds = 5,
+	ProfileCheckSeconds = 10,
+}
+
+-- Performance profiles. "Auto" = Development in Studio, Normal live, HighPopulation
+-- when player count reaches HighPopulationPlayers.
+EWConfig.DefaultPerformanceProfile = "Auto"
+EWConfig.HighPopulationPlayers = 40
+EWConfig.PerformanceProfiles = {
+	Development = {
+		FrameBudgetMs = 4.0,
+		RaycastsPerFrame = 400,
+		VoxelReadsPerFrame = 200,
+		SpindleSubPaths = 4,
+		ProfileMaxSamples = 72,
+		MaxDetailedInterferers = 6,
+		LinkIntervalMultiplier = 1.0,
+	},
+	Normal = {
+		FrameBudgetMs = 2.5,
+		RaycastsPerFrame = 160,
+		VoxelReadsPerFrame = 96,
+		SpindleSubPaths = 2,
+		ProfileMaxSamples = 56,
+		MaxDetailedInterferers = 4,
+		LinkIntervalMultiplier = 1.0,
+	},
+	HighPopulation = {
+		FrameBudgetMs = 1.6,
+		RaycastsPerFrame = 90,
+		VoxelReadsPerFrame = 48,
+		SpindleSubPaths = 0,
+		ProfileMaxSamples = 40,
+		MaxDetailedInterferers = 2,
+		LinkIntervalMultiplier = 1.6,
+	},
+}
+
+-- Channel plan used to resolve string TransmissionChannel attributes.
+-- Map/mission designers add their own named channels here (values in MHz).
+EWConfig.ChannelPlan = {
+	["TEST-VHF-1"] = 45.000,
+	["TEST-VHF-2"] = 52.250,
+	["TEST-UHF-1"] = 300.000,
+	["TEST-LBAND-1"] = 1350.000,
+}
+
+-- Test range (Studio only). Placed far from typical map content by default.
+EWConfig.TestEnvironment = {
+	Origin = Vector3.new(12000, 0, 12000),
+	FolderName = "EWTestRange",
+}
+
+return EWConfig
+]]></ProtectedString>
+			</Properties>
+		</Item>
+		<Item class="ModuleScript" referent="RBX00000004">
+			<Properties>
+				<string name="Name">EWRemotes</string>
+				<ProtectedString name="Source"><![CDATA[--!strict
+--[[
+	EWRemotes
+	Single source of truth for client/server communication contracts.
+
+	The SERVER creates the remotes (ReplicatedStorage.EWShared.Remotes) during
+	bootstrap; clients only ever wait for them. Clients never send authoritative
+	values - every request is validated by EWSecurityService.
+
+	CONTRACTS (Phase 1)
+
+	DeviceCommand        RemoteEvent     client -> server
+	    payload = { Action: "TogglePower" | "SetPower" | "QueryStatus",
+	                Device: Instance,          -- any instance inside the device
+	                On: boolean? }             -- SetPower only
+	    Server validates type/shape, rate limit, ownership or proximity.
+
+	DeviceStatus         RemoteEvent     server -> one client
+	    payload = { DisplayName: string, PowerState: string,
+	                BatteryPercent: number?, Message: string?, Ok: boolean }
+
+	DiagnosticsRequest   RemoteFunction  client -> server (developers only)
+	    payload = { Action: "Snapshot" | "Subscribe" | "Unsubscribe" | "RunTests"
+	                       | "SetDebugPaths" | "SetProfile" | "WatchLink" | "UnwatchLink",
+	                Enabled: boolean?, Profile: string?, TxId: string?, RxId: string?,
+	                WatchId: string? }
+	    returns  { Ok: boolean, Error: string?, Data: any? }
+
+	DiagnosticsStream    RemoteEvent     server -> subscribed developers only
+	    payload = { Kind: "Snapshot" | "TestLog" | "DebugPaths", Data: any }
+]]
+
+local RunService = game:GetService("RunService")
+
+local EWRemotes = {}
+
+EWRemotes.FolderName = "Remotes"
+
+EWRemotes.Definitions = {
+	DeviceCommand = "RemoteEvent",
+	DeviceStatus = "RemoteEvent",
+	DiagnosticsRequest = "RemoteFunction",
+	DiagnosticsStream = "RemoteEvent",
+}
+
+local function getFolder(create: boolean): Instance?
+	local shared = script.Parent
+	local folder = shared:FindFirstChild(EWRemotes.FolderName)
+	if folder then
+		return folder
+	end
+	if create then
+		local f = Instance.new("Folder")
+		f.Name = EWRemotes.FolderName
+		f.Parent = shared
+		return f
+	end
+	return shared:WaitForChild(EWRemotes.FolderName, 30)
+end
+
+-- Server: create all remotes (idempotent). Returns name -> instance.
+function EWRemotes.CreateAll(): { [string]: Instance }
+	assert(RunService:IsServer(), "EWRemotes.CreateAll is server-only")
+	local folder = getFolder(true) :: Instance
+	local out = {}
+	for name, className in pairs(EWRemotes.Definitions) do
+		local existing = folder:FindFirstChild(name)
+		if existing and existing.ClassName ~= className then
+			existing:Destroy()
+			existing = nil
+		end
+		if not existing then
+			local remote = Instance.new(className)
+			remote.Name = name
+			remote.Parent = folder
+			existing = remote
+		end
+		out[name] = existing :: Instance
+	end
+	return out
+end
+
+-- Client or server: get one remote, waiting for the server to create it.
+function EWRemotes.Get(name: string, timeoutSeconds: number?): Instance?
+	assert(EWRemotes.Definitions[name] ~= nil, "Unknown EW remote: " .. name)
+	local folder = getFolder(RunService:IsServer())
+	if not folder then
+		return nil
+	end
+	return folder:WaitForChild(name, timeoutSeconds or 30)
+end
+
+return EWRemotes
+]]></ProtectedString>
+			</Properties>
+		</Item>
+		<Item class="ModuleScript" referent="RBX00000005">
+			<Properties>
+				<string name="Name">EWTypes</string>
+				<ProtectedString name="Source"><![CDATA[--!strict
+--[[
+	EWTypes
+	Shared type definitions for the Electronic Warfare (EW) simulation.
+
+	UNIT CONVENTIONS (used everywhere in the EW code base)
+	  * Power ................ dBm   (decibels relative to 1 mW)
+	  * Gain ................. dBi   (antenna gain relative to an isotropic radiator)
+	  * Loss ................. dB    (positive number = signal is weaker)
+	  * Frequency ............ MHz
+	  * Bandwidth ............ kHz
+	  * World distance ....... studs (Roblox units)
+	  * RF distance .......... meters (studs * EWConfig.Units.MetersPerStud)
+	  * Energy ............... Wh    (battery capacity / charge)
+	  * Electrical draw ...... W
+
+	All numeric RF values in this project are GAME-SIMULATED values produced by
+	documented simplified models (see docs/PHASE1_ARCHITECTURE.md). They are not
+	measurements of real equipment performance.
+]]
+
+export type PowerState = "Off" | "Booting" | "On" | "Fault" | "Depleted"
+
+-- Detection classes requested by the design brief (section 5).
+export type DetectionClass =
+	"ActiveTransmitter"
+	| "PassiveElectronic"
+	| "RadarEmitter"
+	| "Communications"
+	| "DroneLink"
+	| "BackgroundSource"
+
+export type SignalType = "Voice" | "Data" | "Telemetry" | "Beacon" | "Radar" | "Noise" | "Unintentional" | "Navigation"
+
+export type Modulation = "FM" | "AM" | "PSK" | "FSK" | "OFDM" | "FHSS" | "DSSS" | "Pulse" | "Noise" | "CW" | "Broadband"
+
+export type AntennaPattern = "Isotropic" | "Omni" | "Directional"
+
+export type Polarization = "Vertical" | "Horizontal" | "Circular"
+
+export type ObstructionClass = "Unobstructed" | "PartiallyObstructed" | "Obstructed" | "HeavilyObstructed"
+
+export type QualityState = "Clear" | "Good" | "Degraded" | "Broken" | "Unusable" | "NoSignal" | "Incompatible" | "Offline"
+
+export type AnalysisMode = "Full" | "ProfileOnly" | "Cached" | "Deferred"
+
+export type AntennaSpec = {
+	Pattern: AntennaPattern,
+	GainDbi: number,
+	BeamwidthDeg: number, -- only used by Directional patterns (half-power beamwidth)
+	FrontToBackDb: number, -- maximum off-boresight attenuation for Directional patterns
+	ElevationFloorDb: number, -- deepest null allowed for Omni (dipole-like) elevation pattern
+	Polarization: Polarization,
+	HeightOffsetStuds: number, -- used when no EWAntenna attachment exists
+}
+
+-- Static description of a waveform / emission type. Lives in SignalProfiles.
+export type SignalProfile = {
+	Id: string,
+	DisplayName: string,
+	SignalType: SignalType,
+	Modulation: Modulation,
+	DetectionClass: DetectionClass,
+	Intentional: boolean, -- false for unintentional emissions (computers, generators)
+	DefaultFrequencyMHz: number,
+	MinFrequencyMHz: number,
+	MaxFrequencyMHz: number,
+	BandwidthKHz: number,
+	TxPowerDbm: number, -- default transmit power (conducted, before antenna gain)
+	PowerLevelsDbm: { [string]: number }?, -- optional named power levels (e.g. LOW/MED/HIGH)
+	DutyCycle: number, -- 0..1 average fraction of time the emission is present while keyed
+	Antenna: AntennaSpec,
+	SensitivityDbm: number, -- receiver hard floor (below this nothing is demodulated)
+	NoiseFigureDb: number, -- receiver noise figure
+	RequiredSinrDb: number, -- SINR needed for minimally intelligible reception
+	InterferenceRejectionDb: number, -- processing gain against uncorrelated interference (FHSS/DSSS)
+	Stability: number, -- 0..1 (1 = perfectly stable oscillator/output)
+	ContinuousEmission: boolean, -- true if the emitter radiates whenever powered (beacons, radars, noise)
+	Source: string, -- provenance of the default numbers ("Public datasheet", "Game value", ...)
+	Notes: string?,
+}
+
+export type Emitter = {
+	Id: string,
+	DeviceId: string,
+	ProfileId: string,
+	SignalType: SignalType,
+	Modulation: Modulation,
+	Intentional: boolean,
+	FrequencyMHz: number,
+	BandwidthKHz: number,
+	TxPowerDbm: number,
+	DutyCycle: number,
+	Transmitting: boolean,
+	ContinuousEmission: boolean,
+	NetworkId: string?,
+	SecurityProfile: string?,
+	Priority: number,
+	Stability: number,
+	Antenna: AntennaSpec,
+	SignatureReductionDb: number, -- derived from DetectionDifficulty (applies to ES detection only)
+}
+
+export type Receiver = {
+	Id: string,
+	DeviceId: string,
+	ProfileId: string,
+	Modulation: Modulation,
+	FrequencyMHz: number,
+	BandwidthKHz: number,
+	SensitivityDbm: number,
+	NoiseFigureDb: number,
+	RequiredSinrDb: number,
+	InterferenceRejectionDb: number,
+	NetworkId: string?,
+	SecurityProfile: string?,
+	Antenna: AntennaSpec,
+	Enabled: boolean,
+}
+
+export type BatteryState = {
+	CapacityWh: number,
+	ChargeWh: number,
+	IdleDrawW: number,
+	ReceiveDrawW: number,
+	TransmitDrawW: number,
+	LowFraction: number,
+	CriticalFraction: number,
+	Removable: boolean,
+	LowWarned: boolean,
+	CriticalWarned: boolean,
+}
+
+export type DeviceDefinition = {
+	Id: string,
+	DisplayName: string,
+	ElectronicType: string,
+	DetectionClass: DetectionClass,
+	DefaultSignalProfile: string,
+	HasReceiver: boolean,
+	DefaultPowerState: PowerState,
+	BootTimeSeconds: number,
+	Battery: {
+		CapacityWh: number,
+		IdleDrawW: number,
+		ReceiveDrawW: number,
+		TransmitDrawW: number,
+		Removable: boolean,
+	}?, -- nil = externally/mains powered
+	EmissionEnabledByDefault: boolean,
+	Priority: number,
+}
+
+-- Server-side authoritative record for one registered electronic object.
+export type DeviceRecord = {
+	Id: string,
+	Root: Instance,
+	DefinitionId: string,
+	ElectronicType: string,
+	DetectionClass: DetectionClass,
+	DisplayName: string,
+	Faction: string?,
+	Serial: string?,
+	OwnerUserId: number?,
+	Detectable: boolean, -- EWDetectable flag result (eligible for detection results)
+	RegistrationSources: { [string]: boolean }, -- "Flag", "Tag", "API"
+	PowerState: PowerState,
+	PowerStateChangedAt: number,
+	BootCompleteAt: number?,
+	FaultReason: string?,
+	Battery: BatteryState?,
+	Emitters: { Emitter },
+	Receivers: { Receiver },
+	DetectionDifficulty: number,
+	-- Cached spatial data (refreshed by the position job)
+	Position: Vector3,
+	AntennaCFrame: CFrame,
+	Velocity: Vector3,
+	LastPositionUpdate: number,
+	NextPositionUpdate: number,
+	PositionInterval: number,
+	InWorld: boolean,
+	-- Instance bindings
+	AnchorPart: BasePart?,
+	AntennaAttachment: Attachment?,
+	Revision: number,
+	RegisteredAt: number,
+	Attributes: { [string]: any },
+	ConfigurationNotes: { string }?,
+}
+
+export type ObstacleHit = {
+	Instance: Instance?,
+	MaterialKey: string,
+	Kind: string, -- "Structure" | "Vegetation" | "Glass" | "Metal" | ...
+	DistanceFromAStuds: number,
+	ThicknessStuds: number,
+	EntryPosition: Vector3,
+	ExitPosition: Vector3,
+	Capped: boolean,
+	FixedLossDb: number?, -- EWAttenuationDb override
+}
+
+export type SubPath = {
+	Obstacles: { ObstacleHit },
+	VegetationStuds: number,
+	Weight: number,
+	OffsetStuds: number,
+}
+
+-- Frequency-independent geometry of a propagation path (cacheable).
+export type PathGeometry = {
+	A: Vector3,
+	B: Vector3,
+	DistanceStuds: number,
+	HorizontalStuds: number,
+	SampleCount: number,
+	SampleSpacingStuds: number,
+	SampleDistances: { number }, -- studs from A along the path
+	SampleGround: { number }, -- surface height (terrain or static structure) used for diffraction
+	SampleLos: { number }, -- straight line-of-sight height at each sample
+	SampleKind: { number }, -- 0 = terrain/none, 1 = structure surface
+	SampleExcluded: { boolean }, -- true = excluded from diffraction edge search (endpoint clutter / ground)
+	GroundA: number,
+	GroundB: number,
+	MeanInteriorGround: number,
+	TerrainSolidStuds: number,
+	TerrainSolidMaterials: { [string]: number }, -- material name -> studs
+	WaterPathStuds: number,
+	CavityStuds: number, -- line of sight inside terrain-covered open space (tunnel/cave)
+	EndpointWaterDepthA: number,
+	EndpointWaterDepthB: number,
+	SubPaths: { SubPath },
+	EndpointClutterRadiusStuds: number,
+	Mode: AnalysisMode,
+	RaycastsUsed: number,
+	VoxelReadsUsed: number,
+	ComputedAt: number,
+	Approximate: boolean,
+	Notes: { string },
+}
+
+export type PropagationLosses = {
+	FrequencyMHz: number,
+	DiffractionDb: number,
+	DiffractionEdges: number,
+	PrincipalV: number,
+	PrincipalEdgeDistanceStuds: number?,
+	PrincipalEdgeHeightStuds: number?,
+	TerrainPenetrationDb: number,
+	StructureDb: number,
+	StructureCenterDb: number,
+	EndpointClutterDb: number,
+	VegetationDb: number,
+	WaterDb: number,
+	CavityDb: number,
+	OverTheTopDb: number,
+	ThroughPathDb: number,
+	ExcessDb: number,
+	DominantPath: string, -- "Direct" | "OverTheTop" | "Through" | "Mixed"
+	Class: ObstructionClass,
+	LineOfSight: boolean,
+	Explanation: { string },
+}
+
+export type CompatibilityResult = {
+	FrequencyOffsetMHz: number,
+	OverlapFraction: number, -- fraction of emitter power inside the receiver passband
+	CouplingLossDb: number, -- loss applied to the emitter power to get in-band power
+	InBand: boolean,
+	ModulationMatch: boolean,
+	NetworkMatch: boolean,
+	SecurityMatch: boolean,
+	Intelligible: boolean,
+	Reasons: { string },
+}
+
+export type QualityResult = {
+	State: QualityState,
+	Score: number, -- 0..1
+	MarginDb: number, -- SINR - required SINR
+	SmoothedMarginDb: number,
+	PacketLoss: number, -- 0..1 probability of a lost data unit / voice frame
+	NoiseLevel: number, -- 0..1 audio hiss level for presentation layers
+	DropoutRate: number, -- 0..1 probability of a voice dropout per presentation tick
+	Readability: number, -- 1..5 (radio-check readability scale)
+	Strength: number, -- 1..5 (radio-check signal strength scale)
+}
+
+export type LinkResult = {
+	TxDeviceId: string,
+	RxDeviceId: string,
+	EmitterId: string,
+	ReceiverId: string,
+	FrequencyMHz: number,
+	DistanceStuds: number,
+	DistanceMeters: number,
+	TxActive: boolean,
+	EirpDbm: number,
+	TxPowerDbm: number,
+	TxGainDbi: number,
+	RxGainDbi: number,
+	PolarizationLossDb: number,
+	FsplDb: number,
+	PlaneEarthDb: number,
+	BasicLossDb: number,
+	BasicModel: string,
+	EffectiveHeightTxM: number,
+	EffectiveHeightRxM: number,
+	Propagation: PropagationLosses?,
+	WeatherLossDb: number,
+	ShadowFadingDb: number,
+	FastFadingDb: number,
+	EquipmentJitterDb: number,
+	TotalPathLossDb: number,
+	ReceivedPowerDbm: number,
+	InBandSignalDbm: number,
+	NoiseFloorDbm: number,
+	ExternalNoiseFigureDb: number,
+	InterferenceDbm: number,
+	InterfererCount: number,
+	SnrDb: number,
+	SinrDb: number,
+	Compatibility: CompatibilityResult,
+	Quality: QualityResult,
+	AnalysisMode: AnalysisMode,
+	Stale: boolean,
+	Timestamp: number,
+	Reasons: { string },
+}
+
+export type LinkWatchOptions = {
+	Priority: number?, -- 1 (critical) .. 3 (background)
+	EmitterIndex: number?,
+	ReceiverIndex: number?,
+	Label: string?,
+	IncludeInterference: boolean?,
+}
+
+return {}
+]]></ProtectedString>
+			</Properties>
+		</Item>
+		<Item class="ModuleScript" referent="RBX00000006">
+			<Properties>
+				<string name="Name">MaterialProfiles</string>
+				<ProtectedString name="Source"><![CDATA[--!strict
+--[[
+	MaterialProfiles
+	Configurable RF attenuation for structure materials (BaseParts) and terrain
+	voxel materials.
+
+	Structure obstacle loss (per penetrated obstacle):
+	    L = (EntryLossDb + LossDbPerMeter * thickness_m) * (f_MHz / 1000) ^ FrequencyExponent
+	    capped at OpaqueLossDb.
+	The 1 GHz reference values are game values loosely informed by published
+	building-material measurements (concrete and brick attenuate far more than
+	wood or plain glass; metal enclosures are leakage-limited; loss rises with
+	frequency). They are not measurements.
+
+	Terrain voxel loss (per meter of solid terrain along the line of sight):
+	    L/m = LossDbPerMeterAt100MHz * (f_MHz / 100) ^ FrequencyExponent
+
+	Map builders can override any part with attributes:
+	    EWMaterial     = "Concrete" | "Wood" | ... (any key below)
+	    EWAttenuationDb = number  (fixed loss for this part, ignores thickness)
+	    EWIgnore       = true     (part is never an RF obstacle)
+]]
+
+export type StructureMaterial = {
+	Key: string,
+	Kind: string, -- "Structure" | "Glass" | "Metal" | "Vegetation" | "Water" | "Ignore"
+	EntryLossDb: number,
+	LossDbPerMeter: number,
+	FrequencyExponent: number,
+}
+
+export type TerrainMaterial = {
+	Key: string,
+	LossDbPerMeterAt100MHz: number,
+	FrequencyExponent: number,
+}
+
+local MaterialProfiles = {}
+
+MaterialProfiles.OpaqueLossDb = 100
+
+local Structure: { [string]: StructureMaterial } = {}
+local function S(key: string, kind: string, entry: number, perMeter: number, exponent: number)
+	Structure[key] = {
+		Key = key,
+		Kind = kind,
+		EntryLossDb = entry,
+		LossDbPerMeter = perMeter,
+		FrequencyExponent = exponent,
+	}
+end
+
+-- key                kind          entry  dB/m  freqExp
+S("Default", "Structure", 3.0, 15, 0.40)
+S("Plastic", "Structure", 2.5, 12, 0.40)
+S("SmoothPlastic", "Structure", 2.5, 12, 0.40)
+S("Neon", "Structure", 2.5, 12, 0.40)
+S("Concrete", "Structure", 5.0, 40, 0.50)
+S("Pavement", "Structure", 5.0, 40, 0.50)
+S("Asphalt", "Structure", 4.0, 35, 0.50)
+S("Brick", "Structure", 3.0, 25, 0.45)
+S("Cobblestone", "Structure", 3.5, 30, 0.45)
+S("Marble", "Structure", 4.0, 30, 0.45)
+S("Granite", "Structure", 4.0, 30, 0.45)
+S("Slate", "Structure", 4.0, 30, 0.45)
+S("Basalt", "Structure", 4.0, 30, 0.45)
+S("Rock", "Structure", 4.0, 30, 0.45)
+S("Limestone", "Structure", 3.5, 28, 0.45)
+S("Sandstone", "Structure", 3.5, 28, 0.45)
+S("Pebble", "Structure", 3.0, 25, 0.45)
+S("CrackedLava", "Structure", 4.0, 30, 0.45)
+S("CeramicTiles", "Structure", 3.0, 25, 0.45)
+S("ClayRoofTiles", "Structure", 2.5, 20, 0.45)
+S("RoofShingles", "Structure", 2.0, 15, 0.40)
+S("Plaster", "Structure", 2.0, 15, 0.40)
+S("Wood", "Structure", 1.5, 10, 0.35)
+S("WoodPlanks", "Structure", 1.5, 10, 0.35)
+S("Cardboard", "Structure", 0.5, 3, 0.30)
+S("Fabric", "Structure", 0.5, 2, 0.30)
+S("Leather", "Structure", 0.5, 3, 0.30)
+S("Carpet", "Structure", 0.5, 3, 0.30)
+S("Rubber", "Structure", 1.0, 8, 0.30)
+S("Sand", "Structure", 1.5, 15, 0.40) -- sandbags / berms made of parts
+S("Ground", "Structure", 2.0, 20, 0.40)
+S("Mud", "Structure", 2.5, 25, 0.40)
+S("Salt", "Structure", 2.0, 20, 0.40)
+S("Snow", "Structure", 0.5, 2, 0.30)
+S("Ice", "Structure", 0.8, 3, 0.30)
+S("Glacier", "Structure", 0.8, 3, 0.30)
+S("Glass", "Glass", 2.0, 20, 0.20)
+S("Metal", "Metal", 28.0, 10, 0.10)
+S("DiamondPlate", "Metal", 28.0, 10, 0.10)
+S("CorrodedMetal", "Metal", 24.0, 10, 0.10)
+S("Foil", "Metal", 22.0, 0, 0.10)
+S("Grass", "Vegetation", 0, 0, 0)
+S("LeafyGrass", "Vegetation", 0, 0, 0)
+S("ForceField", "Ignore", 0, 0, 0)
+S("Air", "Ignore", 0, 0, 0)
+S("Water", "Water", 0, 0, 0)
+
+local Terrain: { [string]: TerrainMaterial } = {}
+local function T(key: string, perMeter: number, exponent: number)
+	Terrain[key] = { Key = key, LossDbPerMeterAt100MHz = perMeter, FrequencyExponent = exponent }
+end
+
+-- Moist soils absorb strongly; dry rock, sand and ice are far more transparent.
+T("Default", 3.0, 0.35)
+T("Ground", 4.0, 0.35)
+T("Mud", 5.0, 0.35)
+T("Grass", 4.0, 0.35)
+T("LeafyGrass", 4.0, 0.35)
+T("Sand", 1.5, 0.35)
+T("Salt", 3.0, 0.35)
+T("Rock", 2.0, 0.35)
+T("Basalt", 2.0, 0.35)
+T("Slate", 2.0, 0.35)
+T("Granite", 2.0, 0.35)
+T("Limestone", 2.2, 0.35)
+T("Sandstone", 2.0, 0.35)
+T("Marble", 2.0, 0.35)
+T("CrackedLava", 2.0, 0.35)
+T("Pebble", 2.5, 0.35)
+T("Cobblestone", 2.5, 0.35)
+T("Concrete", 3.0, 0.40)
+T("Pavement", 3.0, 0.40)
+T("Asphalt", 3.0, 0.40)
+T("Brick", 3.0, 0.40)
+T("WoodPlanks", 1.0, 0.30)
+T("Snow", 0.3, 0.30)
+T("Glacier", 0.15, 0.30)
+T("Ice", 0.15, 0.30)
+
+function MaterialProfiles.GetStructure(materialName: string?): StructureMaterial
+	if materialName then
+		local profile = Structure[materialName]
+		if profile then
+			return profile
+		end
+	end
+	return Structure.Default
+end
+
+function MaterialProfiles.GetTerrain(materialName: string?): TerrainMaterial
+	if materialName then
+		local profile = Terrain[materialName]
+		if profile then
+			return profile
+		end
+	end
+	return Terrain.Default
+end
+
+function MaterialProfiles.StructureLossDb(profile: StructureMaterial, thicknessMeters: number, frequencyMHz: number): number
+	if profile.Kind == "Ignore" or profile.Kind == "Vegetation" or profile.Kind == "Water" then
+		return 0
+	end
+	local base = profile.EntryLossDb + profile.LossDbPerMeter * math.max(thicknessMeters, 0)
+	local factor = (math.max(frequencyMHz, 1) / 1000) ^ profile.FrequencyExponent
+	return math.min(base * factor, MaterialProfiles.OpaqueLossDb)
+end
+
+function MaterialProfiles.TerrainLossDbPerMeter(profile: TerrainMaterial, frequencyMHz: number): number
+	return profile.LossDbPerMeterAt100MHz * (math.max(frequencyMHz, 1) / 100) ^ profile.FrequencyExponent
+end
+
+-- Allow designers to add or tune materials at runtime.
+function MaterialProfiles.SetStructure(key: string, kind: string, entry: number, perMeter: number, exponent: number)
+	S(key, kind, entry, perMeter, exponent)
+end
+
+function MaterialProfiles.SetTerrain(key: string, perMeter: number, exponent: number)
+	T(key, perMeter, exponent)
+end
+
+return MaterialProfiles
+]]></ProtectedString>
+			</Properties>
+		</Item>
+		<Item class="ModuleScript" referent="RBX00000007">
+			<Properties>
+				<string name="Name">RFMath</string>
+				<ProtectedString name="Source"><![CDATA[--!strict
+--[[
+	RFMath
+	Pure, side-effect-free RF math used by the server simulation (and safe to use
+	on the client for presentation). No Roblox world access happens here, which
+	keeps every equation independently testable.
+
+	Models implemented (simplified, documented, game-simulated):
+	  * Free-space path loss (Friis)              FSPL = 20log10(d_km) + 20log10(f_MHz) + 32.45
+	  * Plane-earth (two-ray) loss                L = 40log10(d_m) - 20log10(ht_m) - 20log10(hr_m)
+	  * Single knife-edge diffraction, ITU-R P.526 J(v) approximation
+	        J(v) = 6.9 + 20log10( sqrt((v-0.1)^2 + 1) + v - 0.1 )   for v > -0.78, else 0
+	  * Multiple edges: Deygout construction with transition weighting T = 1 - exp(-J(vp)/6)
+	  * Thermal noise kTB (-174 dBm/Hz at 290 K) and ITU-R P.372 man-made noise curves
+	  * Weissberger vegetation loss
+	  * ITU-R P.838-3 rain specific attenuation (tabulated coefficients, interpolated)
+	  * Dipole-like elevation pattern and parabolic directional main lobe
+	  * Linear polarization mismatch loss
+	  * Rician / Rayleigh small-scale fading power gain from Gaussian components
+
+	Nothing here models exact multipath, reflection ray tracing, or real waveforms.
+]]
+
+local RFMath = {}
+
+local SPEED_OF_LIGHT = 299792458
+local EARTH_RADIUS_M = 6371000
+local LOG10 = math.log10
+local SQRT = math.sqrt
+local EXP = math.exp
+
+RFMath.THERMAL_NOISE_DBM_PER_HZ = -174.0
+RFMath.KNIFE_EDGE_V_THRESHOLD = -0.78
+
+function RFMath.Clamp(x: number, lo: number, hi: number): number
+	if x < lo then
+		return lo
+	elseif x > hi then
+		return hi
+	end
+	return x
+end
+
+function RFMath.Lerp(a: number, b: number, t: number): number
+	return a + (b - a) * t
+end
+
+function RFMath.WavelengthMeters(frequencyMHz: number): number
+	return SPEED_OF_LIGHT / (math.max(frequencyMHz, 1e-6) * 1e6)
+end
+
+function RFMath.DbToLinear(db: number): number
+	return 10 ^ (db / 10)
+end
+
+function RFMath.LinearToDb(x: number): number
+	return 10 * LOG10(math.max(x, 1e-30))
+end
+
+-- Sum two powers given in dBm (incoherent power addition).
+function RFMath.PowerSumDbm(a: number, b: number): number
+	if a == -math.huge then
+		return b
+	elseif b == -math.huge then
+		return a
+	end
+	return RFMath.LinearToDb(RFMath.DbToLinear(a) + RFMath.DbToLinear(b))
+end
+
+-- Combine two ALTERNATIVE propagation paths given their losses (dB). The received
+-- power is the incoherent sum of both contributions, so the lower-loss path
+-- dominates and two equal paths give 3 dB less loss than either alone.
+function RFMath.ParallelLossDb(l1: number, l2: number): number
+	local p = 10 ^ (-l1 / 10) + 10 ^ (-l2 / 10)
+	return -10 * LOG10(math.max(p, 1e-30))
+end
+
+-- Power average of several losses (used for Fresnel spindle sampling).
+function RFMath.PowerAverageLossDb(losses: { number }, weights: { number }?): number
+	local sum, wsum = 0, 0
+	for i, l in ipairs(losses) do
+		local w = if weights then (weights[i] or 1) else 1
+		sum += w * 10 ^ (-l / 10)
+		wsum += w
+	end
+	if wsum <= 0 then
+		return 0
+	end
+	return -10 * LOG10(math.max(sum / wsum, 1e-30))
+end
+
+function RFMath.FreeSpacePathLossDb(distanceMeters: number, frequencyMHz: number): number
+	local dKm = math.max(distanceMeters, 1) / 1000
+	return 20 * LOG10(dKm) + 20 * LOG10(math.max(frequencyMHz, 1e-3)) + 32.45
+end
+
+function RFMath.PlaneEarthLossDb(distanceMeters: number, txHeightM: number, rxHeightM: number): number
+	local d = math.max(distanceMeters, 1)
+	return 40 * LOG10(d) - 20 * LOG10(math.max(txHeightM, 0.1)) - 20 * LOG10(math.max(rxHeightM, 0.1))
+end
+
+-- Distance beyond which the two-ray (plane-earth) regime applies.
+function RFMath.TwoRayCrossoverMeters(txHeightM: number, rxHeightM: number, frequencyMHz: number): number
+	return 4 * math.pi * txHeightM * rxHeightM / RFMath.WavelengthMeters(frequencyMHz)
+end
+
+-- Basic transmission loss: free space inside the crossover distance, the larger of
+-- free-space and plane-earth beyond it (plane-earth is only valid there).
+function RFMath.BasicTransmissionLossDb(
+	distanceMeters: number,
+	txHeightM: number,
+	rxHeightM: number,
+	frequencyMHz: number
+): (number, number, number, string)
+	local fspl = RFMath.FreeSpacePathLossDb(distanceMeters, frequencyMHz)
+	local pe = RFMath.PlaneEarthLossDb(distanceMeters, txHeightM, rxHeightM)
+	local crossover = RFMath.TwoRayCrossoverMeters(txHeightM, rxHeightM, frequencyMHz)
+	if distanceMeters > crossover and pe > fspl then
+		return pe, fspl, pe, "PlaneEarth"
+	end
+	return fspl, fspl, pe, "FreeSpace"
+end
+
+-- ITU-R P.526 approximation of the knife-edge diffraction loss J(v).
+function RFMath.KnifeEdgeLossDb(v: number): number
+	if v <= RFMath.KNIFE_EDGE_V_THRESHOLD then
+		return 0
+	end
+	local a = v - 0.1
+	return 6.9 + 20 * LOG10(SQRT(a * a + 1) + a)
+end
+
+-- Fresnel-Kirchhoff diffraction parameter for an obstacle h meters above the
+-- line between the terminals (negative h = below the line).
+function RFMath.FresnelParameter(hMeters: number, d1Meters: number, d2Meters: number, wavelengthM: number): number
+	if d1Meters <= 0 or d2Meters <= 0 then
+		return -math.huge
+	end
+	return hMeters * SQRT(2 * (d1Meters + d2Meters) / (wavelengthM * d1Meters * d2Meters))
+end
+
+function RFMath.FresnelRadiusMeters(d1Meters: number, d2Meters: number, wavelengthM: number, zone: number?): number
+	local n = zone or 1
+	if d1Meters <= 0 or d2Meters <= 0 then
+		return 0
+	end
+	return SQRT(n * wavelengthM * d1Meters * d2Meters / (d1Meters + d2Meters))
+end
+
+function RFMath.EarthBulgeMeters(d1Meters: number, d2Meters: number, kFactor: number): number
+	return d1Meters * d2Meters / (2 * kFactor * EARTH_RADIUS_M)
+end
+
+export type DeygoutResult = {
+	LossDb: number,
+	PrincipalV: number,
+	PrincipalIndex: number?,
+	Edges: number,
+}
+
+--[[
+	Deygout multiple-edge diffraction over a sampled profile.
+	distances[i]  : meters from terminal A
+	heights[i]    : obstacle height (meters, same datum as terminal heights, earth bulge already added)
+	excluded[i]   : true = never treated as an edge
+	yA, yB        : antenna heights of the terminals (meters, same datum)
+	totalD        : terminal separation (meters, horizontal)
+	maxDepth      : 0 = principal edge only, 1 = principal + one secondary each side, ...
+]]
+function RFMath.DeygoutLossDb(
+	distances: { number },
+	heights: { number },
+	excluded: { boolean }?,
+	count: number,
+	yA: number,
+	yB: number,
+	totalD: number,
+	wavelengthM: number,
+	maxDepth: number
+): DeygoutResult
+	local edges = 0
+
+	local function principal(iStart: number, iEnd: number, dA: number, hA: number, dB: number, hB: number): (number?, number)
+		local span = dB - dA
+		if span <= 0 then
+			return nil, -math.huge
+		end
+		local bestIndex: number? = nil
+		local bestV = -math.huge
+		for i = iStart, iEnd do
+			if not (excluded and excluded[i]) then
+				local d1 = distances[i] - dA
+				local d2 = dB - distances[i]
+				if d1 > 0 and d2 > 0 then
+					local los = hA + (hB - hA) * (d1 / span)
+					local v = (heights[i] - los) * SQRT(2 * span / (wavelengthM * d1 * d2))
+					if v > bestV then
+						bestV = v
+						bestIndex = i
+					end
+				end
+			end
+		end
+		return bestIndex, bestV
+	end
+
+	local function solve(iStart: number, iEnd: number, dA: number, hA: number, dB: number, hB: number, depth: number): (number, number, number?)
+		if iEnd < iStart then
+			return 0, -math.huge, nil
+		end
+		local p, v = principal(iStart, iEnd, dA, hA, dB, hB)
+		if p == nil or v <= RFMath.KNIFE_EDGE_V_THRESHOLD then
+			return 0, v, nil
+		end
+		local pIndex = p :: number
+		edges += 1
+		local lossP = RFMath.KnifeEdgeLossDb(v)
+		if depth >= maxDepth then
+			return lossP, v, pIndex
+		end
+		local lossT = solve(iStart, pIndex - 1, dA, hA, distances[pIndex], heights[pIndex], depth + 1)
+		local lossR = solve(pIndex + 1, iEnd, distances[pIndex], heights[pIndex], dB, hB, depth + 1)
+		local t = 1 - EXP(-lossP / 6)
+		return lossP + t * (lossT + lossR), v, pIndex
+	end
+
+	local loss, v, index = solve(1, count, 0, yA, totalD, yB, 0)
+	return {
+		LossDb = loss,
+		PrincipalV = v,
+		PrincipalIndex = index,
+		Edges = edges,
+	}
+end
+
+function RFMath.ThermalNoiseDbm(bandwidthHz: number): number
+	return RFMath.THERMAL_NOISE_DBM_PER_HZ + 10 * LOG10(math.max(bandwidthHz, 1))
+end
+
+-- ITU-R P.372 median man-made noise figure Fam (dB above kT0B).
+function RFMath.ManMadeNoiseFigureDb(c: number, d: number, frequencyMHz: number): number
+	return c - d * LOG10(math.max(frequencyMHz, 0.3))
+end
+
+-- Operating noise floor: kTB + total noise factor (external Fa plus receiver NF).
+-- f_total = f_a + f_r - 1 (linear noise factors).
+function RFMath.SystemNoiseFloorDbm(bandwidthHz: number, receiverNoiseFigureDb: number, externalNoiseFigureDb: number): number
+	local fa = 10 ^ (externalNoiseFigureDb / 10)
+	local fr = 10 ^ (receiverNoiseFigureDb / 10)
+	local total = math.max(fa + fr - 1, 1)
+	return RFMath.ThermalNoiseDbm(bandwidthHz) + 10 * LOG10(total)
+end
+
+-- Weissberger modified exponential decay model (f in GHz, depth in meters).
+function RFMath.WeissbergerLossDb(depthMeters: number, frequencyGHz: number, minFrequencyGHz: number?): number
+	if depthMeters <= 0 then
+		return 0
+	end
+	local f = math.max(frequencyGHz, minFrequencyGHz or 0.03)
+	local fTerm = f ^ 0.284
+	if depthMeters < 14 then
+		return 0.45 * fTerm * depthMeters
+	end
+	local d = math.min(depthMeters, 400)
+	return 1.33 * fTerm * d ^ 0.588
+end
+
+-- ITU-R P.838-3 coefficients (horizontal polarization) at tabulated frequencies.
+local RAIN_TABLE = {
+	{ f = 1, k = 0.0000259, a = 0.9691 },
+	{ f = 2, k = 0.0000847, a = 1.0664 },
+	{ f = 4, k = 0.0001071, a = 1.6009 },
+	{ f = 6, k = 0.0007056, a = 1.5900 },
+	{ f = 7, k = 0.001915, a = 1.4810 },
+	{ f = 8, k = 0.004115, a = 1.3905 },
+	{ f = 10, k = 0.01217, a = 1.2571 },
+	{ f = 12, k = 0.02386, a = 1.1825 },
+	{ f = 15, k = 0.04481, a = 1.1233 },
+	{ f = 20, k = 0.09164, a = 1.0568 },
+	{ f = 25, k = 0.1571, a = 0.9991 },
+	{ f = 30, k = 0.2403, a = 0.9485 },
+	{ f = 35, k = 0.3374, a = 0.9047 },
+	{ f = 40, k = 0.4431, a = 0.8673 },
+}
+
+-- Rain specific attenuation in dB/km (approximate, interpolated in log-frequency).
+function RFMath.RainSpecificAttenuationDbPerKm(frequencyGHz: number, rainRateMmH: number): number
+	if rainRateMmH <= 0 or frequencyGHz < 1 then
+		return 0
+	end
+	local f = math.min(frequencyGHz, 40)
+	local lower = RAIN_TABLE[1]
+	local upper = RAIN_TABLE[#RAIN_TABLE]
+	for i = 1, #RAIN_TABLE - 1 do
+		if f >= RAIN_TABLE[i].f and f <= RAIN_TABLE[i + 1].f then
+			lower = RAIN_TABLE[i]
+			upper = RAIN_TABLE[i + 1]
+			break
+		end
+	end
+	local t = 0
+	if upper.f > lower.f then
+		t = (LOG10(f) - LOG10(lower.f)) / (LOG10(upper.f) - LOG10(lower.f))
+	end
+	local logK = LOG10(lower.k) + (LOG10(upper.k) - LOG10(lower.k)) * t
+	local alpha = lower.a + (upper.a - lower.a) * t
+	return (10 ^ logK) * rainRateMmH ^ alpha
+end
+
+-- Approximate cloud/fog liquid-water specific attenuation (dB/km per g/m^3).
+-- Rough f^2 fit, only meaningful above ~10 GHz.
+function RFMath.FogSpecificCoefficient(frequencyGHz: number): number
+	if frequencyGHz < 3 then
+		return 0
+	end
+	return 0.0004 * frequencyGHz ^ 1.95
+end
+
+--[[
+	Antenna gain toward a direction.
+	axis      : antenna element axis (UpVector of the antenna frame) for Omni patterns
+	boresight : main-lobe direction (LookVector of the antenna frame) for Directional patterns
+	toTarget  : unit vector from the antenna to the far terminal
+]]
+function RFMath.AntennaGainDbi(
+	pattern: string,
+	gainDbi: number,
+	beamwidthDeg: number,
+	frontToBackDb: number,
+	elevationFloorDb: number,
+	axis: Vector3,
+	boresight: Vector3,
+	toTarget: Vector3
+): (number, number)
+	if pattern == "Isotropic" then
+		return gainDbi, 0
+	elseif pattern == "Directional" then
+		local c = RFMath.Clamp(boresight:Dot(toTarget), -1, 1)
+		local offDeg = math.deg(math.acos(c))
+		local bw = math.max(beamwidthDeg, 1)
+		local attenuation = math.min(12 * (offDeg / bw) ^ 2, frontToBackDb)
+		return gainDbi - attenuation, offDeg
+	end
+	-- Omni: dipole-like doughnut, gain proportional to sin^2(angle from the element axis).
+	local cosAxis = RFMath.Clamp(axis:Dot(toTarget), -1, 1)
+	local sin2 = 1 - cosAxis * cosAxis
+	local floorLinear = 10 ^ (-math.abs(elevationFloorDb) / 10)
+	local elevationDeg = 90 - math.deg(math.acos(math.abs(cosAxis)))
+	return gainDbi + 10 * LOG10(math.max(sin2, floorLinear)), elevationDeg
+end
+
+-- Polarization mismatch between two antennas for a given propagation direction.
+function RFMath.PolarizationLossDb(
+	polA: string,
+	axisA: Vector3,
+	polB: string,
+	axisB: Vector3,
+	propagation: Vector3,
+	maxLossDb: number
+): number
+	local circularA = polA == "Circular"
+	local circularB = polB == "Circular"
+	if circularA and circularB then
+		return 0
+	elseif circularA or circularB then
+		return 3
+	end
+	-- Project each element axis onto the plane perpendicular to the propagation direction.
+	local pa = axisA - propagation * axisA:Dot(propagation)
+	local pb = axisB - propagation * axisB:Dot(propagation)
+	local ma, mb = pa.Magnitude, pb.Magnitude
+	if ma < 1e-3 or mb < 1e-3 then
+		-- Looking straight down an element: the pattern null already models this.
+		return 0
+	end
+	local c = math.abs((pa / ma):Dot(pb / mb))
+	if c < 1e-4 then
+		return maxLossDb
+	end
+	return math.min(-20 * LOG10(c), maxLossDb)
+end
+
+-- Rician fading power gain (dB) from two unit Gaussian components and a K-factor.
+-- K = 0 reduces to Rayleigh. Mean linear power gain is 1.
+function RFMath.RicianPowerGainDb(g1: number, g2: number, kFactor: number, floorDb: number): number
+	local k = math.max(kFactor, 0)
+	local los = SQRT(k / (k + 1))
+	local scatter = SQRT(1 / (k + 1)) / SQRT(2)
+	local i = los + scatter * g1
+	local q = scatter * g2
+	local p = i * i + q * q
+	return math.max(10 * LOG10(math.max(p, 1e-12)), floorDb)
+end
+
+-- Fraction of an emitter's power that falls inside a receiver passband, assuming a
+-- flat emission spectrum across its bandwidth.
+function RFMath.BandOverlapFraction(emitterMHz: number, emitterBwKHz: number, receiverMHz: number, receiverBwKHz: number): number
+	local eHalf = math.max(emitterBwKHz, 0.001) / 2000
+	local rHalf = math.max(receiverBwKHz, 0.001) / 2000
+	local lo = math.max(emitterMHz - eHalf, receiverMHz - rHalf)
+	local hi = math.min(emitterMHz + eHalf, receiverMHz + rHalf)
+	if hi <= lo then
+		return 0
+	end
+	return (hi - lo) / (2 * eHalf)
+end
+
+-- Smooth logistic helper used by quality mapping.
+function RFMath.Logistic(x: number, midpoint: number, slope: number): number
+	return 1 / (1 + EXP(-slope * (x - midpoint)))
+end
+
+-- 32-bit wrapping multiply that never exceeds double precision (b < 2^32).
+local function mul32(a: number, b: number): number
+	local x = bit32.band(a, 0xFFFFFFFF)
+	local lo = bit32.band(x, 0xFFFF)
+	local hi = bit32.rshift(x, 16)
+	return bit32.band(lo * b + bit32.band(hi * b, 0xFFFF) * 65536, 0xFFFFFFFF)
+end
+
+-- Deterministic integer hash (murmur3-style finalizer) -> [0, 1).
+function RFMath.Hash01(a: number, b: number, c: number): number
+	local h = mul32(bit32.band(a, 0xFFFFFFFF), 0x85EBCA6B)
+	h = bit32.bxor(h, mul32(bit32.band(b, 0xFFFFFFFF), 0xC2B2AE35))
+	h = bit32.bxor(h, mul32(bit32.band(c, 0xFFFFFFFF), 0x27D4EB2F))
+	h = bit32.bxor(h, bit32.rshift(h, 16))
+	h = mul32(h, 0x85EBCA6B)
+	h = bit32.bxor(h, bit32.rshift(h, 13))
+	h = mul32(h, 0xC2B2AE35)
+	h = bit32.bxor(h, bit32.rshift(h, 16))
+	return h / 4294967296
+end
+
+-- Deterministic standard-normal value from integer lattice coordinates (Box-Muller).
+function RFMath.HashGaussian(a: number, b: number, c: number): number
+	local u1 = math.max(RFMath.Hash01(a, b, c), 1e-9)
+	local u2 = RFMath.Hash01(a + 7919, b - 104729, c + 1299709)
+	return SQRT(-2 * math.log(u1)) * math.cos(2 * math.pi * u2)
+end
+
+-- Smooth 2D value noise with unit-variance Gaussian lattice values.
+-- Used for spatially correlated shadow fading (same place => same value).
+function RFMath.GaussianValueNoise2D(x: number, z: number, cellSize: number, seed: number): number
+	local gx, gz = x / cellSize, z / cellSize
+	local x0, z0 = math.floor(gx), math.floor(gz)
+	local tx, tz = gx - x0, gz - z0
+	-- smoothstep weights
+	tx = tx * tx * (3 - 2 * tx)
+	tz = tz * tz * (3 - 2 * tz)
+	local v00 = RFMath.HashGaussian(x0, z0, seed)
+	local v10 = RFMath.HashGaussian(x0 + 1, z0, seed)
+	local v01 = RFMath.HashGaussian(x0, z0 + 1, seed)
+	local v11 = RFMath.HashGaussian(x0 + 1, z0 + 1, seed)
+	local a = v00 + (v10 - v00) * tx
+	local b = v01 + (v11 - v01) * tx
+	-- Bilinear blending reduces variance between lattice points; renormalize.
+	local w00 = (1 - tx) * (1 - tz)
+	local w10 = tx * (1 - tz)
+	local w01 = (1 - tx) * tz
+	local w11 = tx * tz
+	local norm = SQRT(w00 * w00 + w10 * w10 + w01 * w01 + w11 * w11)
+	return (a + (b - a) * tz) / math.max(norm, 1e-6)
+end
+
+return RFMath
+]]></ProtectedString>
+			</Properties>
+		</Item>
+		<Item class="ModuleScript" referent="RBX00000008">
+			<Properties>
+				<string name="Name">SharedUtilities</string>
+				<ProtectedString name="Source"><![CDATA[--!strict
+--[[
+	SharedUtilities
+	Small dependency-free helpers shared by server and client:
+	  * Signal        - lightweight synchronous event with safe handler errors
+	  * ConnectionBag - owns RBXScriptConnections / Signal connections and counts
+	                    live connections globally (diagnostics, lifecycle tests)
+	  * TokenBucket   - rate limiting
+	  * formatting and numeric helpers
+]]
+
+local SharedUtilities = {}
+
+--------------------------------------------------------------------------------
+-- Global live-connection accounting (Test L: no lingering event connections)
+--------------------------------------------------------------------------------
+local liveConnections = 0
+
+function SharedUtilities.GetLiveConnectionCount(): number
+	return liveConnections
+end
+
+--------------------------------------------------------------------------------
+-- Signal
+--------------------------------------------------------------------------------
+export type SignalConnection = {
+	Connected: boolean,
+	Disconnect: (self: SignalConnection) -> (),
+}
+
+local Signal = {}
+Signal.__index = Signal
+
+export type Signal = typeof(setmetatable(
+	{} :: { _handlers: { { fn: (...any) -> (), conn: SignalConnection } }, _name: string },
+	Signal
+))
+
+function Signal.new(name: string?): Signal
+	return setmetatable({ _handlers = {}, _name = name or "Signal" }, Signal)
+end
+
+function Signal.Connect(self: Signal, fn: (...any) -> ()): SignalConnection
+	local handlers = self._handlers
+	local conn = { Connected = true } :: any
+	local entry = { fn = fn, conn = conn }
+	function conn.Disconnect(c)
+		if not c.Connected then
+			return
+		end
+		c.Connected = false
+		for i, e in ipairs(handlers) do
+			if e == entry then
+				table.remove(handlers, i)
+				break
+			end
+		end
+	end
+	table.insert(handlers, entry)
+	return conn
+end
+
+function Signal.Once(self: Signal, fn: (...any) -> ()): SignalConnection
+	local conn: SignalConnection
+	conn = self:Connect(function(...)
+		conn:Disconnect()
+		fn(...)
+	end)
+	return conn
+end
+
+function Signal.Fire(self: Signal, ...: any)
+	local handlers = self._handlers
+	if #handlers == 0 then
+		return
+	end
+	-- Snapshot so handlers may disconnect themselves during dispatch.
+	local snapshot = table.clone(handlers)
+	for _, entry in ipairs(snapshot) do
+		if entry.conn.Connected then
+			local ok, err = pcall(entry.fn, ...)
+			if not ok then
+				warn(string.format("[EW] %s handler error: %s", self._name, tostring(err)))
+			end
+		end
+	end
+end
+
+function Signal.HandlerCount(self: Signal): number
+	return #self._handlers
+end
+
+function Signal.DisconnectAll(self: Signal)
+	for _, entry in ipairs(self._handlers) do
+		entry.conn.Connected = false
+	end
+	table.clear(self._handlers)
+end
+
+SharedUtilities.Signal = Signal
+
+--------------------------------------------------------------------------------
+-- ConnectionBag
+--------------------------------------------------------------------------------
+local ConnectionBag = {}
+ConnectionBag.__index = ConnectionBag
+
+export type ConnectionBag = typeof(setmetatable({} :: { _items: { any } }, ConnectionBag))
+
+function ConnectionBag.new(): ConnectionBag
+	return setmetatable({ _items = {} }, ConnectionBag)
+end
+
+function ConnectionBag.Add(self: ConnectionBag, connection: any): any
+	table.insert(self._items, connection)
+	liveConnections += 1
+	return connection
+end
+
+function ConnectionBag.Count(self: ConnectionBag): number
+	return #self._items
+end
+
+function ConnectionBag.Clean(self: ConnectionBag)
+	local items = self._items
+	for i = #items, 1, -1 do
+		local item = items[i]
+		local t = typeof(item)
+		if t == "RBXScriptConnection" then
+			item:Disconnect()
+		elseif t == "table" and item.Disconnect then
+			item:Disconnect()
+		elseif t == "function" then
+			item()
+		end
+		items[i] = nil
+		liveConnections -= 1
+	end
+end
+
+SharedUtilities.ConnectionBag = ConnectionBag
+
+--------------------------------------------------------------------------------
+-- TokenBucket
+--------------------------------------------------------------------------------
+local TokenBucket = {}
+TokenBucket.__index = TokenBucket
+
+export type TokenBucket = typeof(setmetatable({} :: { Capacity: number, Refill: number, Tokens: number, Last: number }, TokenBucket))
+
+function TokenBucket.new(capacity: number, refillPerSecond: number): TokenBucket
+	return setmetatable({ Capacity = capacity, Refill = refillPerSecond, Tokens = capacity, Last = os.clock() }, TokenBucket)
+end
+
+function TokenBucket.TryTake(self: TokenBucket, amount: number?): boolean
+	local now = os.clock()
+	self.Tokens = math.min(self.Capacity, self.Tokens + (now - self.Last) * self.Refill)
+	self.Last = now
+	local need = amount or 1
+	if self.Tokens >= need then
+		self.Tokens -= need
+		return true
+	end
+	return false
+end
+
+SharedUtilities.TokenBucket = TokenBucket
+
+--------------------------------------------------------------------------------
+-- Helpers
+--------------------------------------------------------------------------------
+function SharedUtilities.Round(x: number, decimals: number?): number
+	local m = 10 ^ (decimals or 0)
+	return math.floor(x * m + 0.5) / m
+end
+
+function SharedUtilities.FormatDb(x: number?): string
+	if x == nil then
+		return "--"
+	elseif x == math.huge then
+		return "inf"
+	elseif x == -math.huge then
+		return "-inf"
+	end
+	return string.format("%.1f", x)
+end
+
+function SharedUtilities.Quantize(x: number, step: number): number
+	return math.floor(x / step + 0.5)
+end
+
+function SharedUtilities.ShortId(prefix: string, n: number): string
+	return string.format("%s-%05d", prefix, n)
+end
+
+-- Walk up from an instance to find the first ancestor (inclusive) satisfying predicate.
+function SharedUtilities.FindAncestor(instance: Instance?, predicate: (Instance) -> boolean, maxDepth: number?): Instance?
+	local node = instance
+	local depth = 0
+	local limit = maxDepth or 32
+	while node and depth < limit do
+		if predicate(node) then
+			return node
+		end
+		node = node.Parent
+		depth += 1
+	end
+	return nil
+end
+
+return SharedUtilities
+]]></ProtectedString>
+			</Properties>
+		</Item>
+		<Item class="ModuleScript" referent="RBX00000009">
+			<Properties>
+				<string name="Name">SignalCompatibility</string>
+				<ProtectedString name="Source"><![CDATA[--!strict
+--[[
+	SignalCompatibility
+	The single interface every system uses to decide how an emission relates to a
+	receiver. It separates three questions that a naive system conflates:
+
+	  1. ENERGY     - how much of the emitter's power lands in the receiver passband
+	                  (co-channel, partial overlap, adjacent-channel leakage, none)
+	  2. DEMODULATION - can the receiver's mode demodulate that waveform at all
+	  3. AUTHORIZATION - simulated network membership and security profile
+
+	Energy always counts toward interference even when (2) or (3) fail: an
+	incompatible transmission on your frequency is still noise to you.
+
+	Security profiles are SIMULATED strings, e.g. "PT" (plain text) or
+	"CT:<keyId>" (cipher text with a key slot). No cryptography is performed;
+	the server simply compares profiles it owns.
+]]
+
+local Types = require(script.Parent.EWTypes)
+local RFMath = require(script.Parent.RFMath)
+
+type Emitter = Types.Emitter
+type Receiver = Types.Receiver
+type CompatibilityResult = Types.CompatibilityResult
+
+local SignalCompatibility = {}
+
+-- Modulation families that a receiver mode can demodulate.
+local DEMOD_FAMILIES: { [string]: { [string]: boolean } } = {
+	FM = { FM = true },
+	AM = { AM = true },
+	PSK = { PSK = true },
+	FSK = { FSK = true },
+	OFDM = { OFDM = true },
+	FHSS = { FHSS = true },
+	DSSS = { DSSS = true },
+	Pulse = { Pulse = true },
+	CW = { CW = true, AM = true },
+	Broadband = {},
+	Noise = {},
+}
+
+export type CompatibilityOptions = {
+	AdjacentChannelRejectionDb: number?,
+	AdjacentChannelSpan: number?,
+	MinUsefulOverlap: number?,
+	IgnoreAuthorization: boolean?,
+}
+
+local function securityKind(profile: string?): (string, string?)
+	if profile == nil or profile == "" then
+		return "ANY", nil
+	end
+	if profile == "PT" then
+		return "PT", nil
+	end
+	local key = string.match(profile, "^CT:(.+)$")
+	if key then
+		return "CT", key
+	end
+	return "OTHER", profile
+end
+
+-- True when a receiver configured with rxProfile can recover traffic sent with txProfile.
+function SignalCompatibility.SecurityCompatible(txProfile: string?, rxProfile: string?): boolean
+	local txKind, txKey = securityKind(txProfile)
+	local rxKind, rxKey = securityKind(rxProfile)
+	if txKind == "ANY" or rxKind == "ANY" then
+		return true
+	end
+	if txKind == "PT" then
+		-- Plain-text traffic is receivable by PT receivers; CT receivers in this
+		-- simulation also pass PT audio (common radio behaviour, configurable later).
+		return rxKind == "PT" or rxKind == "CT"
+	end
+	if txKind == "CT" then
+		return rxKind == "CT" and txKey == rxKey
+	end
+	return txKey == rxKey
+end
+
+function SignalCompatibility.NetworkCompatible(txNetwork: string?, rxNetwork: string?): boolean
+	if txNetwork == nil or rxNetwork == nil or txNetwork == "" or rxNetwork == "" then
+		return true
+	end
+	return txNetwork == rxNetwork
+end
+
+function SignalCompatibility.ModulationCompatible(txModulation: string, rxModulation: string): boolean
+	local family = DEMOD_FAMILIES[rxModulation]
+	return family ~= nil and family[txModulation] == true
+end
+
+-- Energy coupling only (used for interference sums). Returns overlap fraction and
+-- coupling loss in dB (math.huge when nothing couples).
+function SignalCompatibility.EnergyCoupling(
+	emitterMHz: number,
+	emitterBwKHz: number,
+	receiverMHz: number,
+	receiverBwKHz: number,
+	options: CompatibilityOptions?
+): (number, number, boolean)
+	local acr = (options and options.AdjacentChannelRejectionDb) or 60
+	local span = (options and options.AdjacentChannelSpan) or 3
+	local minOverlap = (options and options.MinUsefulOverlap) or 1e-4
+	local overlap = RFMath.BandOverlapFraction(emitterMHz, emitterBwKHz, receiverMHz, receiverBwKHz)
+	if overlap >= minOverlap then
+		return overlap, -10 * math.log10(overlap), true
+	end
+	-- Not in band: adjacent-channel leakage if the emission edge is within `span`
+	-- receiver bandwidths of the passband edge.
+	local gapMHz = math.abs(emitterMHz - receiverMHz) - (emitterBwKHz + receiverBwKHz) / 2000
+	local rxBwMHz = math.max(receiverBwKHz, 0.001) / 1000
+	if gapMHz <= span * rxBwMHz then
+		-- Leakage proportional to receiver bandwidth relative to emitter bandwidth.
+		local share = math.min(1, receiverBwKHz / math.max(emitterBwKHz, 0.001))
+		return 0, acr - 10 * math.log10(share), false
+	end
+	return 0, math.huge, false
+end
+
+function SignalCompatibility.Evaluate(emitter: Emitter, receiver: Receiver, options: CompatibilityOptions?): CompatibilityResult
+	local reasons = {}
+	local overlap, couplingLoss, inBand =
+		SignalCompatibility.EnergyCoupling(emitter.FrequencyMHz, emitter.BandwidthKHz, receiver.FrequencyMHz, receiver.BandwidthKHz, options)
+
+	local modulationMatch = SignalCompatibility.ModulationCompatible(emitter.Modulation, receiver.Modulation)
+	local networkMatch = true
+	local securityMatch = true
+	if not (options and options.IgnoreAuthorization) then
+		networkMatch = SignalCompatibility.NetworkCompatible(emitter.NetworkId, receiver.NetworkId)
+		securityMatch = SignalCompatibility.SecurityCompatible(emitter.SecurityProfile, receiver.SecurityProfile)
+	end
+
+	if not inBand then
+		table.insert(reasons, if couplingLoss == math.huge then "OFF_FREQUENCY" else "ADJACENT_CHANNEL_ONLY")
+	elseif overlap < 0.5 then
+		table.insert(reasons, "PARTIAL_BAND_OVERLAP")
+	end
+	if not modulationMatch then
+		table.insert(reasons, "MODE_MISMATCH")
+	end
+	if not networkMatch then
+		table.insert(reasons, "NETWORK_MISMATCH")
+	end
+	if not securityMatch then
+		table.insert(reasons, "SECURITY_MISMATCH")
+	end
+	if not receiver.Enabled then
+		table.insert(reasons, "RECEIVER_DISABLED")
+	end
+
+	local intelligible = inBand and overlap >= 0.5 and modulationMatch and networkMatch and securityMatch and receiver.Enabled
+
+	return {
+		FrequencyOffsetMHz = emitter.FrequencyMHz - receiver.FrequencyMHz,
+		OverlapFraction = overlap,
+		CouplingLossDb = couplingLoss,
+		InBand = inBand,
+		ModulationMatch = modulationMatch,
+		NetworkMatch = networkMatch,
+		SecurityMatch = securityMatch,
+		Intelligible = intelligible,
+		Reasons = reasons,
+	}
+end
+
+return SignalCompatibility
+]]></ProtectedString>
+			</Properties>
+		</Item>
+		<Item class="ModuleScript" referent="RBX0000000A">
+			<Properties>
+				<string name="Name">SignalProfiles</string>
+				<ProtectedString name="Source"><![CDATA[--!strict
+--[[
+	SignalProfiles
+	Emission/reception profiles shared by every device. A device references a
+	profile by Id (attribute "SignalProfile" or its DeviceDefinition default) and
+	may override frequency, bandwidth and power with attributes.
+
+	"Source" documents where each default came from:
+	  * "Public datasheet" - unclassified, non-export-controlled manufacturer
+	    datasheet values (e.g. L3Harris AN/PRC-163 datasheet L26821, 08/2024:
+	    250 mW-5 W LOS, 10 W SATCOM, -116 dBm @ 36.5-52 MHz and -114 dBm @
+	    146-426 MHz for 12 dB SINAD).
+	  * "Game value" - gameplay-tuned simulation parameter, not a real figure.
+
+	RequiredSinrDb is the pre-detection SINR the game treats as "minimally
+	intelligible". For analog FM it is set so that NoiseFigure + RequiredSinr
+	reproduces the datasheet 12 dB SINAD sensitivity in a 25 kHz channel.
+	No real waveform, hopping pattern or cryptographic behaviour is modelled.
+]]
+
+local Types = require(script.Parent.EWTypes)
+
+type SignalProfile = Types.SignalProfile
+type AntennaSpec = Types.AntennaSpec
+
+local function omni(gain: number, heightStuds: number, polarization: Types.Polarization?): AntennaSpec
+	return {
+		Pattern = "Omni",
+		GainDbi = gain,
+		BeamwidthDeg = 360,
+		FrontToBackDb = 0,
+		ElevationFloorDb = 15,
+		Polarization = polarization or "Vertical",
+		HeightOffsetStuds = heightStuds,
+	}
+end
+
+local function directional(gain: number, beamwidth: number, ftb: number, heightStuds: number, polarization: Types.Polarization?): AntennaSpec
+	return {
+		Pattern = "Directional",
+		GainDbi = gain,
+		BeamwidthDeg = beamwidth,
+		FrontToBackDb = ftb,
+		ElevationFloorDb = 0,
+		Polarization = polarization or "Vertical",
+		HeightOffsetStuds = heightStuds,
+	}
+end
+
+local function isotropic(gain: number, heightStuds: number): AntennaSpec
+	return {
+		Pattern = "Isotropic",
+		GainDbi = gain,
+		BeamwidthDeg = 360,
+		FrontToBackDb = 0,
+		ElevationFloorDb = 0,
+		Polarization = "Vertical",
+		HeightOffsetStuds = heightStuds,
+	}
+end
+
+local Profiles: { [string]: SignalProfile } = {
+	VHF_FM_VOICE = {
+		Id = "VHF_FM_VOICE",
+		DisplayName = "VHF-LOW FM voice (VULOS-style)",
+		SignalType = "Voice",
+		Modulation = "FM",
+		DetectionClass = "Communications",
+		Intentional = true,
+		DefaultFrequencyMHz = 45.0,
+		MinFrequencyMHz = 30.0,
+		MaxFrequencyMHz = 88.0,
+		BandwidthKHz = 25,
+		TxPowerDbm = 37.0, -- 5 W (public datasheet maximum LOS power)
+		PowerLevelsDbm = { LOW = 24.0, MED = 30.0, HIGH = 37.0 }, -- 0.25 W / 1 W / 5 W
+		DutyCycle = 1.0,
+		Antenna = omni(-2.0, 2.5), -- short whip on a body-worn handheld (game value)
+		SensitivityDbm = -116, -- public datasheet (36.5-52 MHz, 12 dB SINAD)
+		NoiseFigureDb = 9,
+		RequiredSinrDb = 5,
+		InterferenceRejectionDb = 0,
+		Stability = 0.97,
+		ContinuousEmission = false,
+		Source = "Public datasheet (power, sensitivity); game value (antenna, thresholds)",
+	},
+	VHF_AM_VOICE = {
+		Id = "VHF_AM_VOICE",
+		DisplayName = "VHF-HIGH AM voice (air band)",
+		SignalType = "Voice",
+		Modulation = "AM",
+		DetectionClass = "Communications",
+		Intentional = true,
+		DefaultFrequencyMHz = 142.5,
+		MinFrequencyMHz = 118.0,
+		MaxFrequencyMHz = 174.0,
+		BandwidthKHz = 25,
+		TxPowerDbm = 37.0,
+		PowerLevelsDbm = { LOW = 24.0, MED = 30.0, HIGH = 37.0 },
+		DutyCycle = 1.0,
+		Antenna = omni(-1.0, 2.5),
+		SensitivityDbm = -114, -- public datasheet (146-426 MHz band figure)
+		NoiseFigureDb = 8,
+		RequiredSinrDb = 9, -- AM needs more SNR than FM for the same readability (game value)
+		InterferenceRejectionDb = 0,
+		Stability = 0.97,
+		ContinuousEmission = false,
+		Source = "Public datasheet (power, sensitivity); game value (antenna, thresholds)",
+	},
+	UHF_FM_VOICE = {
+		Id = "UHF_FM_VOICE",
+		DisplayName = "UHF FM voice",
+		SignalType = "Voice",
+		Modulation = "FM",
+		DetectionClass = "Communications",
+		Intentional = true,
+		DefaultFrequencyMHz = 300.0,
+		MinFrequencyMHz = 225.0,
+		MaxFrequencyMHz = 512.0,
+		BandwidthKHz = 25,
+		TxPowerDbm = 37.0,
+		PowerLevelsDbm = { LOW = 24.0, MED = 30.0, HIGH = 37.0 },
+		DutyCycle = 1.0,
+		Antenna = omni(0.0, 2.5),
+		SensitivityDbm = -114,
+		NoiseFigureDb = 7,
+		RequiredSinrDb = 5,
+		InterferenceRejectionDb = 0,
+		Stability = 0.97,
+		ContinuousEmission = false,
+		Source = "Public datasheet (power, sensitivity); game value (antenna, thresholds)",
+	},
+	UHF_DIGITAL_VOICE = {
+		Id = "UHF_DIGITAL_VOICE",
+		DisplayName = "UHF narrowband digital voice (simulated CT)",
+		SignalType = "Voice",
+		Modulation = "FSK",
+		DetectionClass = "Communications",
+		Intentional = true,
+		DefaultFrequencyMHz = 310.0,
+		MinFrequencyMHz = 225.0,
+		MaxFrequencyMHz = 512.0,
+		BandwidthKHz = 25,
+		TxPowerDbm = 37.0,
+		PowerLevelsDbm = { LOW = 24.0, MED = 30.0, HIGH = 37.0 },
+		DutyCycle = 1.0,
+		Antenna = omni(0.0, 2.5),
+		SensitivityDbm = -116,
+		NoiseFigureDb = 7,
+		RequiredSinrDb = 7,
+		InterferenceRejectionDb = 0,
+		Stability = 0.98,
+		ContinuousEmission = false,
+		Source = "Game value",
+	},
+	MANET_DATA_UHF = {
+		Id = "MANET_DATA_UHF",
+		DisplayName = "UHF wideband MANET data (generic)",
+		SignalType = "Data",
+		Modulation = "OFDM",
+		DetectionClass = "Communications",
+		Intentional = true,
+		DefaultFrequencyMHz = 400.0,
+		MinFrequencyMHz = 225.0,
+		MaxFrequencyMHz = 450.0,
+		BandwidthKHz = 1200,
+		TxPowerDbm = 37.0,
+		DutyCycle = 0.6,
+		Antenna = omni(0.0, 2.5),
+		SensitivityDbm = -100,
+		NoiseFigureDb = 6,
+		RequiredSinrDb = 10,
+		InterferenceRejectionDb = 0,
+		Stability = 0.98,
+		ContinuousEmission = false,
+		Source = "Game value (generic MANET, not a real waveform)",
+	},
+	MANET_DATA_LBAND = {
+		Id = "MANET_DATA_LBAND",
+		DisplayName = "L-band wideband MANET data (generic)",
+		SignalType = "Data",
+		Modulation = "OFDM",
+		DetectionClass = "Communications",
+		Intentional = true,
+		DefaultFrequencyMHz = 1350.0,
+		MinFrequencyMHz = 1300.0,
+		MaxFrequencyMHz = 2600.0,
+		BandwidthKHz = 5000,
+		TxPowerDbm = 35.0, -- ~3.2 W (public datasheet L/S-band figure)
+		DutyCycle = 0.6,
+		Antenna = omni(2.0, 2.5),
+		SensitivityDbm = -95,
+		NoiseFigureDb = 6,
+		RequiredSinrDb = 10,
+		InterferenceRejectionDb = 0,
+		Stability = 0.98,
+		ContinuousEmission = false,
+		Source = "Public datasheet (power); game value (rest)",
+	},
+	UHF_SATCOM_UPLINK = {
+		Id = "UHF_SATCOM_UPLINK",
+		DisplayName = "UHF SATCOM uplink (generic)",
+		SignalType = "Voice",
+		Modulation = "PSK",
+		DetectionClass = "Communications",
+		Intentional = true,
+		DefaultFrequencyMHz = 300.0,
+		MinFrequencyMHz = 291.0,
+		MaxFrequencyMHz = 318.3,
+		BandwidthKHz = 25,
+		TxPowerDbm = 40.0, -- 10 W (public datasheet SATCOM figure)
+		DutyCycle = 1.0,
+		Antenna = directional(8.0, 60, 15, 3.0, "Circular"),
+		SensitivityDbm = -120,
+		NoiseFigureDb = 4,
+		RequiredSinrDb = 6,
+		InterferenceRejectionDb = 0,
+		Stability = 0.99,
+		ContinuousEmission = false,
+		Source = "Public datasheet (power, band); game value (rest)",
+	},
+	DRONE_C2_24 = {
+		Id = "DRONE_C2_24",
+		DisplayName = "2.4 GHz drone command link (generic FHSS)",
+		SignalType = "Telemetry",
+		Modulation = "FHSS",
+		DetectionClass = "DroneLink",
+		Intentional = true,
+		DefaultFrequencyMHz = 2440.0,
+		MinFrequencyMHz = 2400.0,
+		MaxFrequencyMHz = 2483.5,
+		BandwidthKHz = 2000,
+		TxPowerDbm = 27.0,
+		DutyCycle = 0.3,
+		Antenna = omni(2.0, 1.0),
+		SensitivityDbm = -100,
+		NoiseFigureDb = 6,
+		RequiredSinrDb = 6,
+		InterferenceRejectionDb = 10, -- simulated hopping processing gain vs. narrow interference
+		Stability = 0.95,
+		ContinuousEmission = true,
+		Source = "Game value",
+	},
+	DRONE_VIDEO_58 = {
+		Id = "DRONE_VIDEO_58",
+		DisplayName = "5.8 GHz drone video downlink (generic)",
+		SignalType = "Data",
+		Modulation = "OFDM",
+		DetectionClass = "DroneLink",
+		Intentional = true,
+		DefaultFrequencyMHz = 5800.0,
+		MinFrequencyMHz = 5650.0,
+		MaxFrequencyMHz = 5925.0,
+		BandwidthKHz = 20000,
+		TxPowerDbm = 27.0,
+		DutyCycle = 1.0,
+		Antenna = omni(2.0, 1.0),
+		SensitivityDbm = -88,
+		NoiseFigureDb = 6,
+		RequiredSinrDb = 12,
+		InterferenceRejectionDb = 0,
+		Stability = 0.95,
+		ContinuousEmission = true,
+		Source = "Game value",
+	},
+	SEARCH_RADAR_X = {
+		Id = "SEARCH_RADAR_X",
+		DisplayName = "X-band pulsed search radar (generic)",
+		SignalType = "Radar",
+		Modulation = "Pulse",
+		DetectionClass = "RadarEmitter",
+		Intentional = true,
+		DefaultFrequencyMHz = 9400.0,
+		MinFrequencyMHz = 8500.0,
+		MaxFrequencyMHz = 10500.0,
+		BandwidthKHz = 5000,
+		TxPowerDbm = 50.0,
+		DutyCycle = 0.001, -- average power of a pulsed emitter
+		Antenna = directional(28.0, 3, 30, 4.0, "Horizontal"),
+		SensitivityDbm = -100,
+		NoiseFigureDb = 4,
+		RequiredSinrDb = 13,
+		InterferenceRejectionDb = 0,
+		Stability = 0.99,
+		ContinuousEmission = true,
+		Source = "Game value (generic, not a real radar)",
+	},
+	BEACON_UHF = {
+		Id = "BEACON_UHF",
+		DisplayName = "UHF telemetry beacon (generic)",
+		SignalType = "Beacon",
+		Modulation = "FSK",
+		DetectionClass = "ActiveTransmitter",
+		Intentional = true,
+		DefaultFrequencyMHz = 433.0,
+		MinFrequencyMHz = 400.0,
+		MaxFrequencyMHz = 470.0,
+		BandwidthKHz = 12.5,
+		TxPowerDbm = 20.0,
+		DutyCycle = 0.2,
+		Antenna = omni(0.0, 1.0),
+		SensitivityDbm = -118,
+		NoiseFigureDb = 6,
+		RequiredSinrDb = 8,
+		InterferenceRejectionDb = 0,
+		Stability = 0.9,
+		ContinuousEmission = true,
+		Source = "Game value",
+	},
+	UNINTENTIONAL_EMISSION = {
+		Id = "UNINTENTIONAL_EMISSION",
+		DisplayName = "Unintentional electronic emission",
+		SignalType = "Unintentional",
+		Modulation = "Broadband",
+		DetectionClass = "PassiveElectronic",
+		Intentional = false,
+		DefaultFrequencyMHz = 150.0,
+		MinFrequencyMHz = 30.0,
+		MaxFrequencyMHz = 1000.0,
+		BandwidthKHz = 5000,
+		TxPowerDbm = -45.0, -- very weak radiated signature from clocks/switching supplies (game value)
+		DutyCycle = 1.0,
+		Antenna = isotropic(0.0, 1.0),
+		SensitivityDbm = -200, -- not a receiver
+		NoiseFigureDb = 0,
+		RequiredSinrDb = 0,
+		InterferenceRejectionDb = 0,
+		Stability = 0.7,
+		ContinuousEmission = true,
+		Source = "Game value",
+		Notes = "Powered electronics that never transmit on purpose. Only short-range detection is plausible.",
+	},
+	BROADBAND_NOISE = {
+		Id = "BROADBAND_NOISE",
+		DisplayName = "Broadband electrical noise source",
+		SignalType = "Noise",
+		Modulation = "Noise",
+		DetectionClass = "BackgroundSource",
+		Intentional = false,
+		DefaultFrequencyMHz = 60.0,
+		MinFrequencyMHz = 30.0,
+		MaxFrequencyMHz = 300.0,
+		BandwidthKHz = 60000,
+		TxPowerDbm = -10.0, -- generator / power line style noise (game value)
+		DutyCycle = 1.0,
+		Antenna = isotropic(0.0, 1.5),
+		SensitivityDbm = -200,
+		NoiseFigureDb = 0,
+		RequiredSinrDb = 0,
+		InterferenceRejectionDb = 0,
+		Stability = 0.5,
+		ContinuousEmission = true,
+		Source = "Game value",
+	},
+}
+
+local SignalProfiles = {}
+
+SignalProfiles.DefaultProfileId = "UNINTENTIONAL_EMISSION"
+
+function SignalProfiles.Get(id: string?): SignalProfile?
+	if id == nil then
+		return nil
+	end
+	return Profiles[id]
+end
+
+function SignalProfiles.GetOrDefault(id: string?): SignalProfile
+	return (id and Profiles[id]) or Profiles[SignalProfiles.DefaultProfileId]
+end
+
+function SignalProfiles.All(): { [string]: SignalProfile }
+	return Profiles
+end
+
+-- Register an additional profile at runtime (e.g. from a later phase module).
+function SignalProfiles.Register(profile: SignalProfile)
+	assert(type(profile.Id) == "string", "profile.Id required")
+	Profiles[profile.Id] = profile
+end
+
+function SignalProfiles.CopyAntenna(spec: AntennaSpec): AntennaSpec
+	return table.clone(spec)
+end
+
+return SignalProfiles
+]]></ProtectedString>
+			</Properties>
+		</Item>
+	</Item>
+</roblox>

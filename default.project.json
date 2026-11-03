@@ -1,0 +1,23 @@
+{
+  "name": "EW-Simulation",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "EWShared": {
+        "$path": "src/ReplicatedStorage/EWShared"
+      }
+    },
+    "ServerScriptService": {
+      "EWServer": {
+        "$path": "src/ServerScriptService/EWServer"
+      }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "EWClient": {
+          "$path": "src/StarterPlayerScripts/EWClient"
+        }
+      }
+    }
+  }
+}

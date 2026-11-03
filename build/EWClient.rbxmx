@@ -1,0 +1,832 @@
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
+	<Item class="Folder" referent="RBX0000001D">
+		<Properties>
+			<string name="Name">EWClient</string>
+		</Properties>
+		<Item class="LocalScript" referent="RBX0000001E">
+			<Properties>
+				<string name="Name">EWClientController</string>
+				<bool name="Disabled">false</bool>
+				<ProtectedString name="Source"><![CDATA[--[[
+	EWClientController (LocalScript)
+	Client entry point for the EW system. The client is presentation only:
+	it renders what the server reports and sends validated REQUESTS.
+
+	Phase 1 responsibilities
+	  * DeviceStatus notifications (power, battery warnings, command replies)
+	  * Loads the developer diagnostics panel only when the server marks this
+	    player with the "EWDeveloper" attribute (the server re-checks every
+	    diagnostics request, so the attribute grants nothing by itself)
+	  * Exposes EWClient.Modules.EWClientAPI for other client code
+]]
+
+local Players = game:GetService("Players")
+local StarterGui = game:GetService("StarterGui")
+
+local player = Players.LocalPlayer
+local modules = script.Parent:WaitForChild("Modules")
+local ClientAPI = require(modules:WaitForChild("EWClientAPI"))
+
+local function notify(title: string, text: string)
+	-- SetCore can fail while the CoreScripts are still loading; retry briefly.
+	task.spawn(function()
+		for _ = 1, 10 do
+			local ok = pcall(function()
+				StarterGui:SetCore("SendNotification", { Title = title, Text = text, Duration = 4 })
+			end)
+			if ok then
+				return
+			end
+			task.wait(0.5)
+		end
+	end)
+end
+
+ClientAPI.StatusReceived:Connect(function(payload)
+	if type(payload) ~= "table" then
+		return
+	end
+	local lines = { tostring(payload.PowerState or "?") }
+	if type(payload.BatteryPercent) == "number" then
+		table.insert(lines, string.format("BATT %d%%", payload.BatteryPercent))
+	end
+	if type(payload.Message) == "string" then
+		table.insert(lines, payload.Message)
+	end
+	notify(tostring(payload.DisplayName or "Device"), table.concat(lines, "  |  "))
+end)
+
+local diagnosticsLoaded = false
+local function maybeLoadDiagnostics()
+	if diagnosticsLoaded or player:GetAttribute("EWDeveloper") ~= true then
+		return
+	end
+	diagnosticsLoaded = true
+	local ui = require(modules:WaitForChild("EWDiagnosticsUI"))
+	ui.Start()
+end
+
+player:GetAttributeChangedSignal("EWDeveloper"):Connect(maybeLoadDiagnostics)
+maybeLoadDiagnostics()
+]]></ProtectedString>
+			</Properties>
+		</Item>
+		<Item class="Folder" referent="RBX0000001F">
+			<Properties>
+				<string name="Name">Modules</string>
+			</Properties>
+			<Item class="ModuleScript" referent="RBX00000020">
+				<Properties>
+					<string name="Name">EWClientAPI</string>
+					<ProtectedString name="Source"><![CDATA[--[[
+	EWClientAPI
+	Thin client wrapper around the EW remotes. Other client code (equipment UIs,
+	the Interaction Menu module) can use it instead of touching remotes directly.
+
+	    local API = require(StarterPlayerScripts.EWClient.Modules.EWClientAPI)
+	    API.TogglePower(someInstanceInsideTheDevice)
+	    API.StatusReceived:Connect(function(status) ... end)
+
+	All calls are requests; the server validates ownership, range and rate.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("EWShared")
+local EWRemotes = require(Shared.EWRemotes)
+local SharedUtilities = require(Shared.SharedUtilities)
+
+local API = {}
+
+API.StatusReceived = SharedUtilities.Signal.new("EWStatusReceived")
+
+local commandRemote = EWRemotes.Get("DeviceCommand") :: RemoteEvent
+local statusRemote = EWRemotes.Get("DeviceStatus") :: RemoteEvent
+
+statusRemote.OnClientEvent:Connect(function(payload)
+	API.StatusReceived:Fire(payload)
+end)
+
+function API.TogglePower(device: Instance)
+	commandRemote:FireServer({ Action = "TogglePower", Device = device })
+end
+
+function API.SetPower(device: Instance, on: boolean)
+	commandRemote:FireServer({ Action = "SetPower", Device = device, On = on })
+end
+
+function API.QueryStatus(device: Instance)
+	commandRemote:FireServer({ Action = "QueryStatus", Device = device })
+end
+
+return API
+]]></ProtectedString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX00000021">
+				<Properties>
+					<string name="Name">EWDebugPathRenderer</string>
+					<ProtectedString name="Source"><![CDATA[--[[
+	EWDebugPathRenderer (developer client only)
+	Draws signal paths and obstruction points received from the server as
+	LOCAL parts under workspace.CurrentCamera. Parts parented to the camera are
+	not replicated, so other players never see them.
+
+	Colors follow the link quality state; small cubes mark structure entry
+	points (white = direct ray, grey = Fresnel spindle ray); the red diamond is
+	the principal diffraction edge.
+]]
+
+local Renderer = {}
+
+local folder: Folder? = nil
+
+local STATE_COLORS = {
+	Clear = Color3.fromRGB(124, 252, 0),
+	Good = Color3.fromRGB(173, 255, 47),
+	Degraded = Color3.fromRGB(255, 215, 0),
+	Broken = Color3.fromRGB(255, 165, 0),
+	Unusable = Color3.fromRGB(255, 90, 31),
+	NoSignal = Color3.fromRGB(255, 48, 48),
+	Incompatible = Color3.fromRGB(255, 102, 204),
+	Offline = Color3.fromRGB(138, 138, 138),
+}
+
+local function getFolder(): Folder
+	if folder and folder.Parent then
+		return folder
+	end
+	local f = Instance.new("Folder")
+	f.Name = "EWDebugPaths"
+	f.Parent = workspace.CurrentCamera
+	folder = f
+	return f
+end
+
+local function basePart(): Part
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.CastShadow = false
+	p.Material = Enum.Material.Neon
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	return p
+end
+
+local function line(parent: Instance, a: Vector3, b: Vector3, color: Color3, width: number)
+	local length = (b - a).Magnitude
+	if length < 0.05 then
+		return
+	end
+	local p = basePart()
+	p.Size = Vector3.new(width, width, length)
+	p.CFrame = CFrame.lookAt((a + b) / 2, b)
+	p.Color = color
+	p.Transparency = 0.35
+	p.Parent = parent
+end
+
+local function marker(parent: Instance, position: Vector3, color: Color3, size: number, rotate: boolean?)
+	local p = basePart()
+	p.Size = Vector3.new(size, size, size)
+	p.CFrame = CFrame.new(position) * (if rotate then CFrame.Angles(math.rad(45), 0, math.rad(45)) else CFrame.identity)
+	p.Color = color
+	p.Transparency = 0.1
+	p.Parent = parent
+end
+
+function Renderer.Clear()
+	if folder then
+		folder:ClearAllChildren()
+	end
+end
+
+function Renderer.Render(paths)
+	local root = getFolder()
+	root:ClearAllChildren()
+	if type(paths) ~= "table" then
+		return
+	end
+	for _, path in ipairs(paths) do
+		if typeof(path.A) == "Vector3" and typeof(path.B) == "Vector3" then
+			local color = STATE_COLORS[path.State] or Color3.new(1, 1, 1)
+			line(root, path.A, path.B, color, 0.35)
+			for _, o in ipairs(path.Obstacles or {}) do
+				if typeof(o.Entry) == "Vector3" then
+					marker(root, o.Entry, if o.Center then Color3.new(1, 1, 1) else Color3.fromRGB(150, 150, 150), if o.Center then 1.2 else 0.7)
+				end
+			end
+			if typeof(path.Edge) == "Vector3" then
+				marker(root, path.Edge, Color3.fromRGB(255, 40, 40), 3, true)
+				-- Vertical tick from the line of sight up to the edge top.
+				local t = (path.Edge - path.A):Dot(path.B - path.A) / math.max((path.B - path.A).Magnitude ^ 2, 1e-6)
+				local onLine = path.A:Lerp(path.B, math.clamp(t, 0, 1))
+				line(root, Vector3.new(path.Edge.X, onLine.Y, path.Edge.Z), path.Edge, Color3.fromRGB(255, 40, 40), 0.2)
+			end
+		end
+	end
+end
+
+return Renderer
+]]></ProtectedString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX00000022">
+				<Properties>
+					<string name="Name">EWDiagnosticsUI</string>
+					<ProtectedString name="Source"><![CDATA[--[[
+	EWDiagnosticsUI (developer only)
+	Live view of the server's authoritative EW state. Toggle with F6
+	(EWConfig.Diagnostics.ToggleKey) or the small "EW" button (mobile).
+
+	Tabs
+	  Devices  registered electronics, power, battery, detectability, sources (F/T/A)
+	  Links    watched links: quality, SINR, link budget, loss breakdown, reasons,
+	           plain-language degradation explanation
+	  Perf     scheduler cost per job, raycasts, voxel reads, caches, security rejections
+	  Log      server log tail and streamed test output
+
+	Actions: Live (subscribe to 1 Hz delta stream), Paths (local debug lines,
+	Studio by default), Run Tests, Profile cycle, Reset max, Watch/Unwatch link.
+	Nothing here is trusted by the server; every action is re-authorized there.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+
+local Shared = ReplicatedStorage:WaitForChild("EWShared")
+local EWConfig = require(Shared.EWConfig)
+local EWRemotes = require(Shared.EWRemotes)
+local PathRenderer = require(script.Parent:WaitForChild("EWDebugPathRenderer"))
+
+local UI = {}
+
+local player = Players.LocalPlayer
+local started = false
+
+local requestRemote: RemoteFunction
+local streamRemote: RemoteEvent
+
+local gui: ScreenGui
+local panel: Frame
+local content: TextLabel
+local scroller: ScrollingFrame
+local statusLabel: TextLabel
+local buttons: { [string]: TextButton } = {}
+
+local currentTab = "Links"
+local live = false
+local paths = false
+local profiles = { "Auto", "Development", "Normal", "HighPopulation" }
+local profileIndex = 1
+
+local devices: { [string]: any } = {}
+local lastSnapshot: any = nil
+local testLog: { string } = {}
+
+local STATE_COLORS = {
+	Clear = "#7CFC00",
+	Good = "#ADFF2F",
+	Degraded = "#FFD700",
+	Broken = "#FFA500",
+	Unusable = "#FF5A1F",
+	NoSignal = "#FF3030",
+	Incompatible = "#FF66CC",
+	Offline = "#8A8A8A",
+	Pending = "#8A8A8A",
+}
+
+local FONT = Enum.Font.RobotoMono
+local TEXT = Color3.fromRGB(205, 225, 190)
+local BG = Color3.fromRGB(18, 22, 18)
+local ACCENT = Color3.fromRGB(120, 160, 90)
+
+local function esc(s: any): string
+	local str = tostring(s)
+	str = string.gsub(str, "&", "&amp;")
+	str = string.gsub(str, "<", "&lt;")
+	str = string.gsub(str, ">", "&gt;")
+	return str
+end
+
+local function colored(state: string): string
+	return string.format('<font color="%s">%s</font>', STATE_COLORS[state] or "#FFFFFF", esc(state))
+end
+
+local function num(x: any, fmt: string?): string
+	if type(x) ~= "number" then
+		return "--"
+	end
+	return string.format(fmt or "%.1f", x)
+end
+
+local function request(payload)
+	local ok, result = pcall(function()
+		return requestRemote:InvokeServer(payload)
+	end)
+	if not ok then
+		return { Ok = false, Error = tostring(result) }
+	end
+	return result or { Ok = false, Error = "NO_RESPONSE" }
+end
+
+local function setStatus(text: string)
+	if statusLabel then
+		statusLabel.Text = text
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Rendering
+--------------------------------------------------------------------------------
+
+local function renderDevices(): { string }
+	local lines = {}
+	local ids = {}
+	for id in pairs(devices) do
+		table.insert(ids, id)
+	end
+	table.sort(ids)
+	table.insert(lines, string.format("<b>%d devices</b>  (Src: F=EWDetectable flag, T=tag, A=API)", #ids))
+	table.insert(lines, "ID        NAME                 TYPE              POWER     BATT  DET  EMIT  FREQ MHz   PROFILE                 SRC  POSITION")
+	for _, id in ipairs(ids) do
+		local d = devices[id]
+		table.insert(
+			lines,
+			string.format(
+				"%-9s %-20s %-17s %-9s %5s  %-3s  %-4s  %9s  %-22s  %-3s  %s%s",
+				esc(d.Id),
+				esc(string.sub(tostring(d.Name), 1, 20)),
+				esc(string.sub(tostring(d.Type), 1, 17)),
+				esc(d.Power),
+				if d.Battery then num(d.Battery, "%.0f") .. "%" else "ext",
+				if d.Detectable then "yes" else "no",
+				if d.Emitting then "TX" else "--",
+				num(d.FrequencyMHz, "%.3f"),
+				esc(string.sub(tostring(d.Profile), 1, 22)),
+				esc(d.Sources),
+				if d.Position then string.format("%.0f,%.0f,%.0f", d.Position.X, d.Position.Y, d.Position.Z) else "?",
+				if d.InWorld then "" else "  (not in world)"
+			)
+		)
+		if d.Notes then
+			table.insert(lines, "          notes: " .. esc(d.Notes))
+		end
+	end
+	return lines
+end
+
+local function renderLinks(): { string }
+	local lines = {}
+	local links = lastSnapshot and lastSnapshot.Links or {}
+	table.insert(lines, string.format("<b>%d watched links</b>  (potential quality if the transmitter keys; TX = keyed now)", #links))
+	for _, l in ipairs(links) do
+		table.insert(lines, "")
+		table.insert(lines, string.format("<b>%s</b>  %s  %s", esc(l.Id), esc(l.Label), colored(l.State or "Pending")))
+		if l.SinrDb then
+			table.insert(
+				lines,
+				string.format(
+					"  margin %s dB  SINR %s  SNR %s | Rx %s dBm  noise %s  interf %s | R%s/S%s %s",
+					num(l.MarginDb),
+					num(l.SinrDb),
+					num(l.SnrDb),
+					num(l.RxDbm),
+					num(l.NoiseDbm),
+					num(l.InterferenceDbm),
+					tostring(l.Readability),
+					tostring(l.Strength),
+					if l.TxActive then "TX" else "idle"
+				)
+			)
+			table.insert(
+				lines,
+				string.format(
+					"  %s MHz  %s studs | EIRP %s  basic %s (%s)  excess %s [diff %s terr %s struct %s veg %s water %s]  fade %s  pol %s  wx %s",
+					num(l.FrequencyMHz, "%.3f"),
+					num(l.DistanceStuds, "%.0f"),
+					num(l.EirpDbm),
+					num(l.BasicDb),
+					esc(l.BasicModel),
+					num(l.ExcessDb),
+					num(l.DiffractionDb),
+					num(l.TerrainDb),
+					num(l.StructureDb),
+					num(l.VegetationDb),
+					num(l.WaterDb),
+					num(l.FadingDb),
+					num(l.PolarizationDb),
+					num(l.WeatherDb)
+				)
+			)
+			table.insert(lines, string.format("  %s / %s  mode %s%s  evals %s  reasons: %s", esc(l.Class), esc(l.Dominant), esc(l.Mode), if l.Stale then " (stale)" else "", tostring(l.Evaluations), esc(l.Reasons ~= "" and l.Reasons or "-")))
+			for _, e in ipairs(l.Explanation or {}) do
+				table.insert(lines, "    . " .. esc(e))
+			end
+		end
+	end
+	return lines
+end
+
+local function renderPerf(): { string }
+	local s = lastSnapshot
+	if not s then
+		return { "No snapshot yet - press Live or switch tabs." }
+	end
+	local lines = {}
+	local sch = s.Scheduler
+	table.insert(lines, string.format("<b>EW %s</b>  profile %s (requested %s)  %.2f m/stud", esc(s.Version), esc(sch.Profile), esc(sch.RequestedProfile), s.MetersPerStud or 0))
+	table.insert(lines, string.format("frame cost avg %s ms  max %s ms  budget %s ms  over-budget frames %d / %d", num(sch.FrameCostMsAvg, "%.2f"), num(sch.FrameCostMsMax, "%.2f"), num(sch.FrameBudgetMs), sch.OverBudgetFrames, sch.Frames))
+	table.insert(lines, string.format("raycasts %d/s (budget %d/frame)  voxel reads %d/s  budget denials %d", sch.RaycastsLastSecond, sch.RaycastsPerFrame, sch.VoxelReadsLastSecond, sch.BudgetDenials))
+	table.insert(lines, "")
+	table.insert(lines, "<b>Jobs</b>")
+	for _, job in ipairs(sch.Jobs) do
+		table.insert(lines, string.format("  %-28s avg %6s ms  max %6s ms  runs %7d  skipped %5d  errors %d%s", esc(job.Name), num(job.AvgCostMs, "%.3f"), num(job.MaxCostMs, "%.3f"), job.Runs, job.Skipped, job.Errors, if job.LastError then "  last: " .. esc(job.LastError) else ""))
+	end
+	table.insert(lines, "")
+	local t = s.Terrain
+	table.insert(lines, "<b>Terrain propagation</b>")
+	table.insert(lines, string.format("  analyses %d  cache hits %d  misses %d  hit rate %s%%  stale reuse %d  deferred %d  profile-only %d", t.Analyses, t.CacheHits, t.CacheMisses, num(t.CacheHitRate), t.CacheStaleReuse, t.Deferred, t.ProfileOnly))
+	table.insert(lines, string.format("  height cells %d  probes %d (rays %d)  structure rays %d  voxel reads %d  invalidations %d", t.HeightCells, t.HeightProbes, t.HeightRays, t.StructureRays, t.VoxelReads, t.Invalidations))
+	table.insert(lines, string.format("  analysis avg %s ms  max %s ms  last analysis rays %d  path cache entries %d", num(t.AnalysisMsAvg, "%.2f"), num(t.AnalysisMsMax, "%.2f"), t.LastAnalysisRays, t.PathCacheEntries))
+	local rf = s.RF
+	table.insert(lines, "<b>RF engine</b>")
+	table.insert(lines, string.format("  evaluations %d (forced %d, deferred %d)  watch evals %d  interference evals %d  active emissions %d  watched links %d", rf.Evaluations, rf.ForcedEvaluations, rf.DeferredEvaluations, rf.WatchEvaluations, rf.InterferenceEvaluations, rf.ActiveEmissions, rf.WatchedLinks))
+	table.insert(lines, string.format("  link evaluation avg %s ms  max %s ms", num(rf.EvaluationMsAvg, "%.2f"), num(rf.EvaluationMsMax, "%.2f")))
+	local r = s.Registry
+	table.insert(lines, "<b>Registry</b>")
+	table.insert(lines, string.format("  devices %d  detectable %d  flags tracked %d  roots tracked %d  spatial items %d  live connections %d", r.Devices, r.Detectable, r.FlagsTracked, r.RootsTracked, r.SpatialItems, r.LiveConnections))
+	table.insert(lines, string.format("  registrations %d  unregistrations %d  flag changes %d  reconfigs %d  migrations %d  restored states %d  orphan flags %d", r.Registrations, r.Unregistrations, r.FlagChanges, r.Reconfigurations, r.RootMigrations, r.RestoredStates, r.OrphanFlags))
+	local sec = s.Security
+	table.insert(lines, "<b>Security</b>")
+	table.insert(lines, string.format("  rejections %d  developers online %d", sec.TotalRejections, sec.Developers))
+	for key, count in pairs(sec.Rejections) do
+		table.insert(lines, string.format("    %-40s %d", esc(key), count))
+	end
+	local env = s.Environment
+	table.insert(lines, "<b>Environment</b>")
+	table.insert(lines, string.format("  noise %s  extra %s dB  rain %s mm/h  snow %s  fog %s  storm %s", esc(env.NoiseEnvironment), num(env.ExtraNoiseDb), num(env.RainRate), num(env.SnowRate), num(env.Fog, "%.2f"), num(env.StormIntensity, "%.2f")))
+	return lines
+end
+
+local function renderLog(): { string }
+	local lines = { "<b>Server log</b>" }
+	for _, line in ipairs(lastSnapshot and lastSnapshot.Log or {}) do
+		table.insert(lines, esc(line))
+	end
+	if #testLog > 0 then
+		table.insert(lines, "")
+		table.insert(lines, "<b>Test output</b>")
+		for _, line in ipairs(testLog) do
+			local escaped = esc(line)
+			if string.find(line, "FAIL", 1, true) then
+				escaped = '<font color="#FF5A1F">' .. escaped .. "</font>"
+			elseif string.find(line, "PASS", 1, true) then
+				escaped = '<font color="#7CFC00">' .. escaped .. "</font>"
+			end
+			table.insert(lines, escaped)
+		end
+	end
+	return lines
+end
+
+local function render()
+	if not content then
+		return
+	end
+	local lines
+	if currentTab == "Devices" then
+		lines = renderDevices()
+	elseif currentTab == "Links" then
+		lines = renderLinks()
+	elseif currentTab == "Perf" then
+		lines = renderPerf()
+	else
+		lines = renderLog()
+	end
+	if #lines > 450 then
+		local trimmed = table.move(lines, #lines - 449, #lines, 1, {})
+		table.insert(trimmed, 1, "(older lines trimmed)")
+		lines = trimmed
+	end
+	content.Text = table.concat(lines, "\n")
+	for name, button in pairs(buttons) do
+		if name == "Tab_" .. currentTab then
+			button.BackgroundColor3 = ACCENT
+		elseif string.sub(name, 1, 4) == "Tab_" then
+			button.BackgroundColor3 = Color3.fromRGB(40, 48, 38)
+		end
+	end
+end
+
+local function applySnapshot(snapshot)
+	if snapshot.Full then
+		table.clear(devices)
+	end
+	for _, row in ipairs(snapshot.Devices or {}) do
+		devices[row.Id] = row
+	end
+	for _, id in ipairs(snapshot.RemovedDevices or {}) do
+		devices[id] = nil
+	end
+	lastSnapshot = snapshot
+	setStatus(string.format("t=%.0f  devices %d  links %d%s", snapshot.Time or 0, snapshot.Registry and snapshot.Registry.Devices or 0, #(snapshot.Links or {}), if snapshot.TestRunning then "  TESTS RUNNING" else ""))
+	render()
+end
+
+--------------------------------------------------------------------------------
+-- Construction
+--------------------------------------------------------------------------------
+
+local function makeButton(parent: Instance, name: string, text: string, position: UDim2, size: UDim2, onClick: () -> ()): TextButton
+	local b = Instance.new("TextButton")
+	b.Name = name
+	b.Text = text
+	b.Font = FONT
+	b.TextSize = 13
+	b.TextColor3 = TEXT
+	b.BackgroundColor3 = Color3.fromRGB(40, 48, 38)
+	b.AutoButtonColor = true
+	b.Position = position
+	b.Size = size
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 4)
+	corner.Parent = b
+	b.Parent = parent
+	b.Activated:Connect(onClick)
+	buttons[name] = b
+	return b
+end
+
+local function makeBox(parent: Instance, name: string, placeholder: string, position: UDim2, size: UDim2): TextBox
+	local box = Instance.new("TextBox")
+	box.Name = name
+	box.PlaceholderText = placeholder
+	box.Text = ""
+	box.Font = FONT
+	box.TextSize = 13
+	box.TextColor3 = TEXT
+	box.PlaceholderColor3 = Color3.fromRGB(110, 120, 100)
+	box.BackgroundColor3 = Color3.fromRGB(30, 36, 30)
+	box.ClearTextOnFocus = false
+	box.Position = position
+	box.Size = size
+	box.Parent = parent
+	return box
+end
+
+local function build()
+	gui = Instance.new("ScreenGui")
+	gui.Name = "EWDiagnostics"
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 50
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	gui.Parent = player:WaitForChild("PlayerGui")
+
+	local toggle = Instance.new("TextButton")
+	toggle.Name = "Toggle"
+	toggle.Text = "EW"
+	toggle.Font = Enum.Font.GothamBold
+	toggle.TextSize = 14
+	toggle.TextColor3 = TEXT
+	toggle.BackgroundColor3 = BG
+	toggle.BackgroundTransparency = 0.2
+	toggle.Size = UDim2.fromOffset(40, 28)
+	toggle.Position = UDim2.new(0, 8, 0, 60)
+	toggle.Parent = gui
+
+	panel = Instance.new("Frame")
+	panel.Name = "Panel"
+	panel.AnchorPoint = Vector2.new(1, 0)
+	panel.Position = UDim2.new(1, -8, 0, 52)
+	panel.Size = UDim2.new(0.58, 0, 0.86, 0)
+	panel.BackgroundColor3 = BG
+	panel.BackgroundTransparency = 0.06
+	panel.Visible = false
+	panel.Parent = gui
+	local constraint = Instance.new("UISizeConstraint")
+	constraint.MinSize = Vector2.new(340, 280)
+	constraint.MaxSize = Vector2.new(1100, 2000)
+	constraint.Parent = panel
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = panel
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = ACCENT
+	stroke.Thickness = 1
+	stroke.Parent = panel
+
+	local title = Instance.new("TextLabel")
+	title.BackgroundTransparency = 1
+	title.Font = Enum.Font.GothamBold
+	title.TextSize = 14
+	title.TextColor3 = TEXT
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Text = "EW DIAGNOSTICS  (developer only - server authoritative)"
+	title.Position = UDim2.fromOffset(10, 4)
+	title.Size = UDim2.new(1, -20, 0, 20)
+	title.Parent = panel
+
+	statusLabel = Instance.new("TextLabel")
+	statusLabel.BackgroundTransparency = 1
+	statusLabel.Font = FONT
+	statusLabel.TextSize = 12
+	statusLabel.TextColor3 = Color3.fromRGB(150, 170, 140)
+	statusLabel.TextXAlignment = Enum.TextXAlignment.Right
+	statusLabel.Text = "not subscribed"
+	statusLabel.Position = UDim2.fromOffset(10, 4)
+	statusLabel.Size = UDim2.new(1, -20, 0, 20)
+	statusLabel.Parent = panel
+
+	local tabs = { "Devices", "Links", "Perf", "Log" }
+	for i, name in ipairs(tabs) do
+		makeButton(panel, "Tab_" .. name, name, UDim2.new((i - 1) / 4, 10, 0, 28), UDim2.new(0.25, -12, 0, 24), function()
+			currentTab = name
+			if not live then
+				local result = request({ Action = "Snapshot" })
+				if result.Ok and result.Data then
+					applySnapshot(result.Data)
+				end
+			end
+			render()
+		end)
+	end
+
+	local actions = {
+		{
+			"Live",
+			"Live: OFF",
+			function(b)
+				live = not live
+				local result = request({ Action = if live then "Subscribe" else "Unsubscribe" })
+				if not result.Ok then
+					live = false
+					setStatus("subscribe failed: " .. tostring(result.Error))
+				end
+				b.Text = if live then "Live: ON" else "Live: OFF"
+			end,
+		},
+		{
+			"Paths",
+			"Paths: OFF",
+			function(b)
+				local want = not paths
+				if want and not live then
+					setStatus("enable Live first")
+					return
+				end
+				local result = request({ Action = "SetDebugPaths", Enabled = want })
+				if result.Ok then
+					paths = want
+					if not paths then
+						PathRenderer.Clear()
+					end
+				else
+					setStatus("paths: " .. tostring(result.Error))
+				end
+				b.Text = if paths then "Paths: ON" else "Paths: OFF"
+			end,
+		},
+		{
+			"RunTests",
+			"Run Tests",
+			function()
+				table.clear(testLog)
+				local result = request({ Action = "RunTests" })
+				setStatus(if result.Ok then "tests started - see Log tab" else "tests: " .. tostring(result.Error))
+				currentTab = "Log"
+				render()
+			end,
+		},
+		{
+			"Profile",
+			"Profile: Auto",
+			function(b)
+				profileIndex = profileIndex % #profiles + 1
+				local result = request({ Action = "SetProfile", Profile = profiles[profileIndex] })
+				b.Text = "Profile: " .. profiles[profileIndex]
+				if not result.Ok then
+					setStatus("profile: " .. tostring(result.Error))
+				end
+			end,
+		},
+		{
+			"ResetMax",
+			"Reset max",
+			function()
+				request({ Action = "ResetMaxima" })
+			end,
+		},
+	}
+	for i, a in ipairs(actions) do
+		local button: TextButton
+		button = makeButton(panel, a[1], a[2], UDim2.new((i - 1) / #actions, 10, 0, 56), UDim2.new(1 / #actions, -12, 0, 24), function()
+			a[3](button)
+		end)
+	end
+
+	local txBox = makeBox(panel, "TxId", "TX id (EW-00001)", UDim2.new(0, 10, 0, 84), UDim2.new(0.22, -6, 0, 24))
+	local rxBox = makeBox(panel, "RxId", "RX id", UDim2.new(0.22, 10, 0, 84), UDim2.new(0.22, -6, 0, 24))
+	makeButton(panel, "Watch", "Watch link", UDim2.new(0.44, 10, 0, 84), UDim2.new(0.16, -6, 0, 24), function()
+		local result = request({ Action = "WatchLink", TxId = txBox.Text, RxId = rxBox.Text })
+		setStatus(if result.Ok then "watching " .. tostring(result.Data) else "watch: " .. tostring(result.Error))
+	end)
+	local watchBox = makeBox(panel, "WatchId", "LINK-00001", UDim2.new(0.6, 10, 0, 84), UDim2.new(0.22, -6, 0, 24))
+	makeButton(panel, "Unwatch", "Unwatch", UDim2.new(0.82, 10, 0, 84), UDim2.new(0.18, -20, 0, 24), function()
+		local result = request({ Action = "UnwatchLink", WatchId = watchBox.Text })
+		setStatus(if result.Ok then "unwatched" else "unwatch: " .. tostring(result.Error))
+	end)
+
+	scroller = Instance.new("ScrollingFrame")
+	scroller.Name = "Content"
+	scroller.BackgroundColor3 = Color3.fromRGB(10, 13, 10)
+	scroller.BackgroundTransparency = 0.1
+	scroller.BorderSizePixel = 0
+	scroller.Position = UDim2.fromOffset(10, 114)
+	scroller.Size = UDim2.new(1, -20, 1, -124)
+	scroller.CanvasSize = UDim2.new(0, 0, 0, 0)
+	scroller.AutomaticCanvasSize = Enum.AutomaticSize.XY
+	scroller.ScrollBarThickness = 8
+	scroller.ScrollingDirection = Enum.ScrollingDirection.XY
+	scroller.Parent = panel
+
+	content = Instance.new("TextLabel")
+	content.Name = "Text"
+	content.BackgroundTransparency = 1
+	content.Font = FONT
+	content.TextSize = 12
+	content.TextColor3 = TEXT
+	content.TextXAlignment = Enum.TextXAlignment.Left
+	content.TextYAlignment = Enum.TextYAlignment.Top
+	content.RichText = true
+	content.TextWrapped = false
+	content.AutomaticSize = Enum.AutomaticSize.XY
+	content.Size = UDim2.fromOffset(0, 0)
+	content.Position = UDim2.fromOffset(6, 4)
+	content.Text = "Press Live to stream server state, or pick a tab for a one-off snapshot."
+	content.Parent = scroller
+
+	local function togglePanel()
+		panel.Visible = not panel.Visible
+		if panel.Visible and not live then
+			local result = request({ Action = "Snapshot" })
+			if result.Ok and result.Data then
+				applySnapshot(result.Data)
+			else
+				setStatus("snapshot: " .. tostring(result.Error))
+			end
+		end
+	end
+	toggle.Activated:Connect(togglePanel)
+	UserInputService.InputBegan:Connect(function(input, processed)
+		if processed then
+			return
+		end
+		if input.KeyCode == EWConfig.Diagnostics.ToggleKey then
+			togglePanel()
+		end
+	end)
+	render()
+end
+
+function UI.Start()
+	if started then
+		return
+	end
+	started = true
+	requestRemote = EWRemotes.Get("DiagnosticsRequest") :: RemoteFunction
+	streamRemote = EWRemotes.Get("DiagnosticsStream") :: RemoteEvent
+	build()
+	streamRemote.OnClientEvent:Connect(function(message)
+		if type(message) ~= "table" then
+			return
+		end
+		if message.Kind == "Snapshot" then
+			applySnapshot(message.Data)
+		elseif message.Kind == "TestLog" then
+			table.insert(testLog, tostring(message.Data))
+			if #testLog > 600 then
+				table.remove(testLog, 1)
+			end
+			if currentTab == "Log" and panel.Visible then
+				render()
+			end
+		elseif message.Kind == "DebugPaths" then
+			if paths then
+				PathRenderer.Render(message.Data)
+			end
+		end
+	end)
+end
+
+return UI
+]]></ProtectedString>
+				</Properties>
+			</Item>
+		</Item>
+	</Item>
+</roblox>
