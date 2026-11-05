@@ -4,13 +4,18 @@ A server-authoritative electromagnetic environment for a military Roblox experie
 jammers, sensors, drones and relays all share one RF engine. In that engine, **real Terrain and map
 geometry** (ridges, valleys, buildings, foliage, tunnels, water) decide whether signals get through.
 
-**Status: Phase 1 (core simulation) implemented.** Phases 2 (AN/PRC-163), 3 (electronic support and
-direction finding), 4 (jammer), 5 (MQ-1C and relays) and 6 (advanced) build on it.
+**Status:**
+* **Phase 1 (core simulation):** done, and tested in Studio.
+* **Phase 2 (AN/PRC-163 radio):** in progress. Dual R/T, front panel and text traffic work; voice
+  and SATCOM are still to come.
+* **Still to build on top:** Phases 3 (electronic support and direction finding), 4 (jammer),
+  5 (MQ-1C and relays) and 6 (advanced).
 
 | Read | For |
 |---|---|
 | [docs/PHASE1_ARCHITECTURE.md](docs/PHASE1_ARCHITECTURE.md) | architecture, data schema, BoolValue rules, RF and terrain models, compatibility, scheduler, test plan |
 | [docs/PHASE1_GUIDE.md](docs/PHASE1_GUIDE.md) | installation (Rojo or prebuilt `.rbxmx`), map integration, remote contracts, config, Studio tests, expected results, limitations |
+| [docs/PHASE2_GUIDE.md](docs/PHASE2_GUIDE.md) | AN/PRC-163: setup, front panel, delivery rules, security, tests R1–R7 |
 | [docs/RESEARCH_NOTES.md](docs/RESEARCH_NOTES.md) | PRC-163 public datasheet facts, screen/keypad spec from the reference images, Interaction Menu notes, EW gaps in the brief, sources |
 
 ## Quick start
@@ -32,6 +37,7 @@ src/ReplicatedStorage/EWShared/        shared types, config, RF math, profiles, 
 src/ServerScriptService/EWServer/      bootstrap, services, Studio test range + runner
 src/StarterPlayerScripts/EWClient/     client controller, developer diagnostics UI, debug path renderer
 src/StarterPlayerScripts/EWInteractionMenu/  EW interaction menu (hold Left Alt near EW gear)
+src/StarterPlayerScripts/EWRadio/      AN/PRC-163 front panel and controller (Phase 2)
 build/                                 generated .rbxmx models (python3 tools/build_rbxmx.py)
 tools/                                 rbxmx builder
 ```

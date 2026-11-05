@@ -19,6 +19,9 @@
         },
         "EWInteractionMenu": {
           "$path": "src/StarterPlayerScripts/EWInteractionMenu"
+        },
+        "EWRadio": {
+          "$path": "src/StarterPlayerScripts/EWRadio"
         }
       }
     }

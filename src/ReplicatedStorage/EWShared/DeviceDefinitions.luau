@@ -49,6 +49,27 @@ local Definitions: { [string]: DeviceDefinition } = {
 		EmissionEnabledByDefault = false, -- radios only emit while keyed (PTT)
 		Priority = 2,
 	},
+	-- Phase 2: dual-channel handheld. RadioService builds its R/T 1 and R/T 2
+	-- emitters/receivers from the radio state (see RadioDefinitions).
+	PRC163 = {
+		Id = "PRC163",
+		DisplayName = "AN/PRC-163",
+		ElectronicType = "Communications",
+		DetectionClass = "Communications",
+		DefaultSignalProfile = "VHF_AM_VOICE",
+		HasReceiver = true,
+		DefaultPowerState = "On",
+		BootTimeSeconds = 3,
+		Battery = {
+			CapacityWh = 88, -- 7.0 Ah Li-ion (public datasheet), game-scaled draw below
+			IdleDrawW = 1.5,
+			ReceiveDrawW = 1.0,
+			TransmitDrawW = 12,
+			Removable = true,
+		},
+		EmissionEnabledByDefault = false, -- keyed by PTT / text bursts only
+		Priority = 1,
+	},
 	ActiveTransmitter = {
 		Id = "ActiveTransmitter",
 		DisplayName = "Transmitter",
@@ -149,6 +170,9 @@ local Aliases: { [string]: string } = {
 	communications = "Communications",
 	comms = "Communications",
 	radio = "Communications",
+	prc163 = "PRC163",
+	anprc163 = "PRC163",
+	falconiv = "PRC163",
 	transmitter = "ActiveTransmitter",
 	activetransmitter = "ActiveTransmitter",
 	beacon = "ActiveTransmitter",

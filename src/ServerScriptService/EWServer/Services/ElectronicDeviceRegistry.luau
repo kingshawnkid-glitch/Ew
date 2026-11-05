@@ -114,6 +114,9 @@ local playerBags: { [Player]: any } = {}
 local backpackBags: { [Instance]: any } = {}
 
 local spatial = SpatialIndex.new(256)
+-- Equipment services (e.g. RadioService) may replace the generic TX1/RX1
+-- configuration of their device types; run after every (re)configuration.
+local configurationExtenders: { (DeviceRecord, { [string]: any }, any) -> () } = {}
 local nextDeviceNumber = 0
 local positionCursor = 1
 
@@ -432,6 +435,9 @@ local function buildRadioConfiguration(record: DeviceRecord, attrs: { [string]: 
 	record.Serial = if type(attrs.EWSerial) == "string" and attrs.EWSerial ~= "" then attrs.EWSerial else nil
 	record.Attributes = attrs
 	record.ConfigurationNotes = notes
+	for _, extender in ipairs(configurationExtenders) do
+		extender(record, attrs, definition)
+	end
 	return definition
 end
 
@@ -1132,6 +1138,15 @@ function Registry:UnregisterDevice(root: Instance)
 		sources.API = nil
 	end
 	evaluateRoot(root)
+end
+
+-- extender(record, attributes, definition) may rewrite record.Emitters /
+-- record.Receivers for its device types. Existing devices are reconfigured.
+function Registry:AddConfigurationExtender(extender: (DeviceRecord, { [string]: any }, any) -> ())
+	table.insert(configurationExtenders, extender)
+	for _, record in ipairs(deviceList) do
+		self:Reconfigure(record)
+	end
 end
 
 -- Process queued registry changes immediately (tests, deterministic tooling).

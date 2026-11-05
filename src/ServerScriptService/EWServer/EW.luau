@@ -9,7 +9,7 @@
 	    local record = ctx.Registry:RegisterDevice(myRadioTool, { ElectronicType = "Communications" })
 
 	Context fields: Config, Remotes, Diagnostics, Scheduler, Environment, Terrain,
-	Registry, Power, Quality, RF, Security, DeviceCommands, Root.
+	Registry, Power, Quality, RF, Security, DeviceCommands, Radio (Phase 2), Root.
 	Services are singletons: requiring a service module directly returns the
 	same instance, but only use it after WaitForReady().
 ]]

@@ -5,9 +5,9 @@
 	there are no circular dependencies), then starts the scheduler.
 
 	INIT ORDER   Diagnostics -> Scheduler -> Environment -> Terrain -> Registry
-	             -> Power -> Quality -> RF -> Security -> DeviceCommands
+	             -> Power -> Quality -> RF -> Security -> DeviceCommands -> Radio
 	START ORDER  Environment -> Terrain -> Registry -> Power -> RF -> Security
-	             -> DeviceCommands -> Diagnostics -> Scheduler (heartbeat last)
+	             -> DeviceCommands -> Radio -> Diagnostics -> Scheduler (heartbeat last)
 
 	Attributes on this script's parent folder (EWServer):
 	  EW_PerformanceProfile  string   "Auto" | "Development" | "Normal" | "HighPopulation"
@@ -55,6 +55,7 @@ context.Quality = require(Services.SignalQualityService)
 context.RF = require(Services.RFSimulationService)
 context.Security = require(Services.EWSecurityService)
 context.DeviceCommands = require(Services.DeviceCommandService)
+context.Radio = require(Services.RadioService)
 
 local INIT_ORDER = {
 	"Diagnostics",
@@ -67,6 +68,7 @@ local INIT_ORDER = {
 	"RF",
 	"Security",
 	"DeviceCommands",
+	"Radio",
 }
 local START_ORDER = {
 	"Environment",
@@ -76,6 +78,7 @@ local START_ORDER = {
 	"RF",
 	"Security",
 	"DeviceCommands",
+	"Radio",
 	"Diagnostics",
 }
 

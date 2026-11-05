@@ -190,6 +190,8 @@ EWConfig.Security = {
 	RateLimits = {
 		DeviceCommand = { Capacity = 8, RefillPerSecond = 2 },
 		DiagnosticsRequest = { Capacity = 12, RefillPerSecond = 3 },
+		RadioCommand = { Capacity = 12, RefillPerSecond = 4 },
+		RadioText = { Capacity = 3, RefillPerSecond = 0.5 }, -- text bursts: 3 back to back, then one per 2 s
 	},
 	MaxStringLength = 64,
 }

@@ -28,6 +28,21 @@
 
 	DiagnosticsStream    RemoteEvent     server -> subscribed developers only
 	    payload = { Kind: "Snapshot" | "TestLog" | "DebugPaths", Data: any }
+
+	CONTRACTS (Phase 2, AN/PRC-163) - validation rules in RadioService
+
+	RadioCommand         RemoteEvent     client -> server
+	    payload = { Action: "Query" | "Knob" | "SelectRt" | "Preset" | "PresetStep" | "Frequency"
+	                       | "Power" | "Squelch" | "Comsec" | "Volume" | "Crossband" | "Zeroize"
+	                       | "PttDown" | "PttUp" | "Text",
+	                Device: Instance, Rt: number?, Number: number?, Value: string?, Text: string? }
+
+	RadioState           RemoteEvent     server -> the radio's carrier
+	    payload = full display state of one radio (knob, R/T 1/2 channels, TX, keys)
+
+	RadioTraffic         RemoteEvent     server -> listeners of a receiving radio
+	    payload = { Device, Rt, Label, FrequencyMHz, From, Text, State, Readability,
+	                Strength, Encrypted, Sent? }
 ]]
 
 local RunService = game:GetService("RunService")
@@ -41,6 +56,9 @@ EWRemotes.Definitions = {
 	DeviceStatus = "RemoteEvent",
 	DiagnosticsRequest = "RemoteFunction",
 	DiagnosticsStream = "RemoteEvent",
+	RadioCommand = "RemoteEvent",
+	RadioState = "RemoteEvent",
+	RadioTraffic = "RemoteEvent",
 }
 
 local function getFolder(create: boolean): Instance?

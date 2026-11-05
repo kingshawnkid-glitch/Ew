@@ -16,6 +16,7 @@
 	       H Airborne | U Underground / water / vegetation | G Interference (core)
 	       F Detection eligibility (core) | I Battery | J Security | M EW backpack menu
 	       K Performance
+	Phase 2 radio tests (R1-R7) live in EWRadioTests and run after these.
 ]]
 
 local Players = game:GetService("Players")
@@ -550,7 +551,13 @@ table.insert(Tests, {
 			log("    buoy antenna above water             " .. describe(surface))
 			log("    submerged antenna                    " .. describe(submerged))
 			log("    through forest                       " .. describe(forest))
-			check.That(offAxis.Propagation.ExcessDb >= aligned.Propagation.ExcessDb + 15, band.Name .. ": receiver deep underground off-axis is heavily degraded")
+			if band.Freq < 100 then
+				-- Below waveguide cutoff the tunnel itself is already lossy (checked
+				-- below), so compare the off-axis receiver against the class instead.
+				check.That(offAxis.Propagation.Class == "HeavilyObstructed", band.Name .. ": receiver deep underground off-axis is heavily degraded")
+			else
+				check.That(offAxis.Propagation.ExcessDb >= aligned.Propagation.ExcessDb + 15, band.Name .. ": receiver deep underground off-axis is heavily degraded")
+			end
 			check.That(submerged.Propagation.ExcessDb >= surface.Propagation.ExcessDb + 8, band.Name .. ": submerged antenna loses >= 8 dB")
 			check.That(forest.Propagation.VegetationDb > 1, band.Name .. ": vegetation contributes attenuation")
 			if band.Freq < 100 then
@@ -896,12 +903,17 @@ table.insert(Tests, {
 	end,
 })
 
+-- Phase 2 (AN/PRC-163) tests.
+for _, test in ipairs(require(script.Parent.EWRadioTests).Get({ newCheck = newCheck, settle = settle, describe = describe })) do
+	table.insert(Tests, test)
+end
+
 --------------------------------------------------------------------------------
 -- Runner
 --------------------------------------------------------------------------------
 
 function EWTestRunner.RunAll(context, log: (string) -> ())
-	log("==== EW PHASE 1 TEST SUITE ====")
+	log("==== EW TEST SUITE (PHASE 1 + 2) ====")
 	log(string.format("MetersPerStud %.2f | RangeScale %.1f", context.Config.Units.MetersPerStud, context.Config.Units.RangeScale))
 	local env = Env.Build(context, log)
 	local results = {}
