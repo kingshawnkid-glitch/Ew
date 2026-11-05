@@ -57,6 +57,9 @@ local raycastsThisFrame = 0
 local raycastBudgetThisFrame = 0
 local voxelReadsThisFrame = 0
 local voxelBudgetThisFrame = 0
+-- While jobs run, budgeted (non-forced) raycasts and voxel reads also stop at
+-- the frame's time budget: ray cost varies a lot with map content and load.
+local frameDeadline = math.huge
 
 local stats = {
 	Frames = 0,
@@ -142,7 +145,7 @@ function EWScheduler:RemoveJob(job: Job)
 end
 
 function EWScheduler:TryConsumeRaycasts(n: number): boolean
-	if raycastsThisFrame + n > raycastBudgetThisFrame then
+	if raycastsThisFrame + n > raycastBudgetThisFrame or os.clock() > frameDeadline then
 		stats.BudgetDenials += 1
 		return false
 	end
@@ -161,7 +164,7 @@ function EWScheduler:RemainingRaycasts(): number
 end
 
 function EWScheduler:TryConsumeVoxelReads(n: number): boolean
-	if voxelReadsThisFrame + n > voxelBudgetThisFrame then
+	if voxelReadsThisFrame + n > voxelBudgetThisFrame or os.clock() > frameDeadline then
 		stats.BudgetDenials += 1
 		return false
 	end
@@ -204,6 +207,7 @@ function EWScheduler:Step()
 	local frameStart = os.clock()
 	local budget = activeProfile.FrameBudgetMs / 1000
 	local deadline = frameStart + budget
+	frameDeadline = deadline
 
 	for _, job in ipairs(jobs) do
 		if job.Enabled then
@@ -239,6 +243,7 @@ function EWScheduler:Step()
 		end
 	end
 
+	frameDeadline = math.huge
 	local frameCostMs = (os.clock() - frameStart) * 1000
 	stats.Frames += 1
 	stats.FrameCostMsAvg = stats.FrameCostMsAvg * 0.98 + frameCostMs * 0.02

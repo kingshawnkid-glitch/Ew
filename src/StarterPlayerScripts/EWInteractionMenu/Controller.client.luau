@@ -264,7 +264,13 @@ local function track(flag: Instance)
 	}
 	devices[flag] = device
 	local function markDirty(desc: Instance)
-		if desc:IsA("Attachment") or desc:IsA("BasePart") then
+		if desc:IsA("Attachment") then
+			-- Only author-placed points matter; the generated fallback point lives
+			-- inside the root too, and rebuilding on it would loop every check.
+			if desc.Name == CONFIG.PointAttachmentName or desc:GetAttribute("EWAction") ~= nil then
+				device.PointsDirty = true
+			end
+		elseif desc:IsA("BasePart") then
 			device.PointsDirty = true
 		end
 	end
@@ -328,7 +334,7 @@ local function setLabel(button: Instance, text: string, color: Color3?)
 		title.Text = text
 	end
 	if object and color then
-		object.ImageColor3 = color
+		object.BackgroundColor3 = color -- the dot is drawn as the label's background
 	end
 end
 
@@ -466,8 +472,19 @@ local function clearMenus()
 	end
 end
 
+-- The character can be replaced before CharacterAdded is connected (custom
+-- character loaders), so re-resolve the root whenever the cached one is stale.
+local function currentRoot(): BasePart?
+	local current = player.Character
+	if current ~= character or not (characterRoot and characterRoot:IsDescendantOf(workspace)) then
+		character = current
+		characterRoot = if current then current:FindFirstChild("HumanoidRootPart") :: BasePart? else nil
+	end
+	return characterRoot
+end
+
 local function distanceTo(device: Device): number
-	local root = characterRoot
+	local root = currentRoot()
 	local anchor = device.Anchor
 	if not (root and anchor and anchor.Parent) then
 		return math.huge

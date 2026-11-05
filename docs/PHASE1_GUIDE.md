@@ -275,11 +275,15 @@ reason with its count.
 
 ## 8. Known limitations (honest list)
 
-* **Not executed in Studio yet.** This environment has no Roblox Studio or Luau runtime. The code
-  has been checked by a structural Luau linter (block and bracket balance, aware of if-expressions)
-  and an undeclared-identifier scan, and the RF math was cross-checked against an independent Python
-  reference. The first Studio run of the test suite is the real validation; please send me its
-  output.
+* **Validated in Studio.** The first Studio run passed 5 of 14 tests. These fixes brought it to 14 of 14:
+  * The test range now waits for terrain collision to update before it samples ground heights.
+  * Barrage jammers count as in band when they cover the receiver's passband.
+  * Budgeted raycasts and voxel reads also stop at the frame's time budget.
+  * Link evaluation no longer starts an evaluation it cannot finish within the frame budget.
+  * The tunnel check at VHF (below waveguide cutoff) now uses the obstruction class.
+  * The test range yields once before flushing the registry, which deferred signals need.
+* **Performance on loaded servers.** Raycast cost varies a lot with map content and server load. On a
+  busy place, the stress test (K) sits close to its 1.5× frame-budget limit.
 * **Simplified propagation.** There are no specular reflections or multipath ray tracing (multipath
   is statistical fading). Diffraction is knife-edge, which underestimates rounded hills slightly.
   Tunnels are treated as straight-line cavity attenuation, not a waveguide simulation.

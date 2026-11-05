@@ -758,7 +758,15 @@ function RF:Start()
 		local deadline = os.clock() + budget * 0.85
 		local now = os.clock()
 		local visited = 0
-		while visited < count and os.clock() < deadline do
+		local evaluated = 0
+		-- Do not start an evaluation that is unlikely to finish inside the budget
+		-- (the first one per frame always runs, so links never starve).
+		local estimate = stats.EvaluationMsAvg / 1000
+		while visited < count do
+			local t = os.clock()
+			if t >= deadline or (evaluated > 0 and t + estimate > deadline) then
+				break
+			end
 			if watchCursor > #watchList then
 				watchCursor = 1
 			end
@@ -767,6 +775,7 @@ function RF:Start()
 			visited += 1
 			if watch and isDue(watch, now) then
 				self:EvaluateWatch(watch, false)
+				evaluated += 1
 			end
 		end
 	end)

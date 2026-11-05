@@ -20,6 +20,7 @@
 ]]
 
 local CollectionService = game:GetService("CollectionService")
+local RunService = game:GetService("RunService")
 
 local EWTestEnvironment = {}
 
@@ -29,6 +30,35 @@ local RIDGE_Z0, RIDGE_Z1 = -100, 600
 local ANTENNA_HEIGHT = 5.5
 
 -- Property order matters: Shape and Size first, then placement via CFrame, Parent last.
+-- Terrain writes (FillBlock etc.) are not raycastable until the physics step
+-- after the write. Probing in the same frame misses and caches the probe floor
+-- as "ground", so wait until each probe column reports the expected surface.
+-- probes: { { x, z, minY, maxY } } relative to origin.
+local function waitForTerrainCollision(origin: Vector3, probes, timeoutSeconds: number?): boolean
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Include
+	params.FilterDescendantsInstances = { workspace.Terrain }
+	params.IgnoreWater = true
+	local deadline = os.clock() + (timeoutSeconds or 5)
+	repeat
+		RunService.Heartbeat:Wait()
+		local settled = true
+		for _, probe in ipairs(probes) do
+			local top = Vector3.new(origin.X + probe[1], origin.Y + 1000, origin.Z + probe[2])
+			local result = workspace:Raycast(top, Vector3.new(0, -2000, 0), params)
+			local y = result and (result.Position.Y - origin.Y)
+			if y == nil or y < probe[3] or y > probe[4] then
+				settled = false
+				break
+			end
+		end
+		if settled then
+			return true
+		end
+	until os.clock() > deadline
+	return false
+end
+
 local function part(props): Part
 	local p = Instance.new("Part")
 	p.Anchored = true
@@ -196,6 +226,15 @@ function EWTestEnvironment.Build(context, log: (string) -> ())
 	terrain:FillBlock(CFrame.new(O + Vector3.new(-160, 10, 400)), Vector3.new(200, 12, 12), Enum.Material.Air)
 	-- Pond: x 400..700, z -650..-500, 24 studs deep.
 	terrain:FillBlock(CFrame.new(O + Vector3.new(550, -12, -575)), Vector3.new(300, 24, 150), Enum.Material.Water)
+	local settled = waitForTerrainCollision(O, {
+		{ -700, -350, -3, 3 }, -- open lane plain
+		{ 700, -350, -3, 3 },
+		{ 0, 250, RIDGE_CENTER_Y + RIDGE_RADIUS - 6, RIDGE_CENTER_Y + RIDGE_RADIUS + 3 }, -- ridge crest
+		{ 0, -1300, -3, 3 }, -- terrain-change lane (berm cleared)
+	})
+	if not settled then
+		log("WARNING: terrain collision did not settle; ground heights may be wrong")
+	end
 	log(string.format("Terrain built in %.2f s", os.clock() - t0))
 
 	------------------------------------------------------------------ structures
@@ -276,6 +315,9 @@ function EWTestEnvironment.Build(context, log: (string) -> ())
 	EWTestEnvironment.CreateStation(env, "UW_RX", at(550, -605, O.Y - 18), { NoStand = true, AntennaHeight = ANTENNA_HEIGHT })
 	EWTestEnvironment.CreateStation(env, "MOBILE", at(-700, -700))
 
+	-- With deferred signal behaviour DescendantAdded has not fired yet; yield once
+	-- so the registry has seen every station's flag before flushing.
+	task.wait()
 	context.Registry:Flush()
 	context.Terrain:ClearCaches()
 	for name in pairs(env.Stations) do
@@ -297,6 +339,11 @@ function EWTestEnvironment.SetBerm(env, present: boolean): (Vector3, Vector3)
 	local center = O + Vector3.new(0, 40, -1300)
 	local size = Vector3.new(60, 80, 200)
 	workspace.Terrain:FillBlock(CFrame.new(center), size, if present then Enum.Material.Ground else Enum.Material.Air)
+	if present then
+		waitForTerrainCollision(O, { { 0, -1300, 74, 83 } })
+	else
+		waitForTerrainCollision(O, { { 0, -1300, -3, 3 } })
+	end
 	return center - size / 2 - Vector3.new(8, 8, 8), center + size / 2 + Vector3.new(8, 8, 8)
 end
 

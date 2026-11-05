@@ -105,7 +105,12 @@ function SignalCompatibility.EnergyCoupling(
 	local span = (options and options.AdjacentChannelSpan) or 3
 	local minOverlap = (options and options.MinUsefulOverlap) or 1e-4
 	local overlap = RFMath.BandOverlapFraction(emitterMHz, emitterBwKHz, receiverMHz, receiverBwKHz)
-	if overlap >= minOverlap then
+	-- A wideband emission (barrage jammer) puts only a tiny share of its power in a
+	-- narrow channel, but it is still in band when it covers the receiver passband.
+	local passbandCovered = if overlap > 0
+		then RFMath.BandOverlapFraction(receiverMHz, receiverBwKHz, emitterMHz, emitterBwKHz)
+		else 0
+	if overlap >= minOverlap or passbandCovered >= minOverlap then
 		return overlap, -10 * math.log10(overlap), true
 	end
 	-- Not in band: adjacent-channel leakage if the emission edge is within `span`
